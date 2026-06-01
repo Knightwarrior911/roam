@@ -22,6 +22,30 @@ def test_stealth_uses_separate_profile(tmp_path):
     assert not c2._profile_dir().endswith("_stealth")
 
 
+async def test_audit_hardened_hides_webdriver(tmp_path):
+    cfg = Config(headless=True, channel=None, stealth_harden=True, profile_dir=str(tmp_path / "p"))
+    c = BrowserController(cfg)
+    try:
+        await c.open(FIXTURE)
+        a = await c.stealth_audit()
+        assert a["checks"]["webdriver_hidden"] is True
+        assert a["checks"]["has_chrome"] is True
+        assert a["verdict"] in ("clean", "ok")
+    finally:
+        await c.close()
+
+
+async def test_audit_unhardened_leaks_webdriver(tmp_path):
+    cfg = Config(headless=True, channel=None, stealth_harden=False, profile_dir=str(tmp_path / "p"))
+    c = BrowserController(cfg)
+    try:
+        await c.open(FIXTURE)
+        a = await c.stealth_audit()
+        assert a["checks"]["webdriver_hidden"] is False   # vanilla automation leaks it
+    finally:
+        await c.close()
+
+
 async def test_stealth_backend_drives_full_surface(tmp_path):
     # the patchright backend must drive the entire tool surface unchanged
     cfg = Config(headless=True, channel=None, mode="stealth",

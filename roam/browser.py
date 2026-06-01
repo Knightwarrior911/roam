@@ -8,6 +8,7 @@ from .errors import RoamError
 from .snapshot import SNAPSHOT_JS, build_outline
 from .memory import SelectorMemory, REMEMBER_JS, format_manual
 from .bypass import PaywallBypass, CLEANUP_JS
+from .stealth import STEALTH_JS, AUDIT_JS, audit_verdict
 
 
 class BrowserController:
@@ -88,6 +89,9 @@ class BrowserController:
             hint = ("run: python -m patchright install chrome" if self.cfg.mode == "stealth"
                     else "run: python -m playwright install chrome")
             raise RoamError("CHROME_LAUNCH_FAILED", str(e), hint)
+        if self.cfg.stealth_harden or self.cfg.mode == "stealth":
+            # inject at document-start so detection sees the patched values
+            await self._ctx.add_init_script(STEALTH_JS)
 
     def _chrome_executable(self):
         if self.cfg.executable_path:
@@ -318,6 +322,10 @@ class BrowserController:
 
     async def url(self):
         return (await self.current_page()).url
+
+    async def stealth_audit(self, tab=None):
+        page = await self.current_page(tab)
+        return audit_verdict(await page.evaluate(AUDIT_JS))
 
     async def import_cookies(self, domain, source="edge"):
         """Load a site's session cookies from a local browser (edge/chrome) so Roam

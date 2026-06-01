@@ -172,6 +172,11 @@ class BridgeBrowser:
     async def url(self):
         return (await self.bridge.call("status"))["url"]
 
+    async def stealth_audit(self, tab=None):
+        from .stealth import AUDIT_JS, audit_verdict
+        r = await self.bridge.call("eval", self._t({"js": "(" + AUDIT_JS + ")()"}, tab))
+        return audit_verdict(r.get("value") if isinstance(r, dict) else r)
+
     async def tabs(self):
         return (await self.bridge.call("tabs"))["tabs"]
 

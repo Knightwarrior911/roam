@@ -132,6 +132,9 @@ async def _recall_manual(name: str | None = None, url: str | None = None):
 async def _forget_manual(domain: str, name: str | None = None):
     return {"forgotten": _memory().forget_manual(domain, name)}
 @tool
+async def _stealth_audit(tab: int | None = None):
+    return await _ctl().stealth_audit(tab=tab)
+@tool
 async def _bypass(enable: bool = True, rules_dir: str | None = None):
     return _ctl().set_bypass(enable, rules_dir)
 @tool
@@ -180,6 +183,7 @@ _REGISTRY = {
     "recall": _recall, "forget": _forget, "bypass": _bypass,
     "import_cookies": _import_cookies, "bridge": _bridge, "bridge_status": _bridge_status,
     "save_manual": _save_manual, "recall_manual": _recall_manual, "forget_manual": _forget_manual,
+    "stealth_audit": _stealth_audit,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 
