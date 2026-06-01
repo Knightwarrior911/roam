@@ -65,10 +65,22 @@ re-snapshotting; `forget(domain)` clears a site. Roam's own private, growing act
 Chrome itself and attaches over CDP (full flag control), since Playwright otherwise injects
 `--disable-extensions`. **Caveat:** Chrome 137+ disabled command-line extension loading
 (`--load-extension`) for automated launches, and by Chrome ~146 the override flag no longer
-works. So on current Chrome this loads nothing. To use a real extension (e.g. a paywall
-bypasser) the practical routes are: a Roam profile cloned from a Chrome profile that already
-has the extension dev-mode-installed, or replicating the extension's behaviour natively via
-request interception. See the v2 spec.
+works. So on current Chrome this loads nothing. For a real extension, clone a Chrome profile that already has it dev-mode-installed. For
+paywalls specifically, you don't need an extension at all, see below.
+
+## Paywall bypass (native, no extension)
+
+`bypass: true` replicates Bypass Paywalls Clean's core tactics directly, no extension and
+works headless: it presents as **Googlebot** (which many metered sites serve full content
+to) and **blocks the paywall/metering vendor scripts** (Piano, Poool, Tinypass, Cxense,
+Zephr, etc.). Point `bypass_rules_dir` at a Bypass Paywalls Clean checkout to pick up its
+per-site `useragent`/`block_regex` rules; otherwise a curated default covers the common
+vendors. Cookies are left intact by default so your logins survive. Toggle at runtime with
+the `bypass` tool.
+
+```json
+{ "bypass": true, "bypass_rules_dir": "C:\\path\\to\\bypass-paywalls-chrome-clean" }
+```
 
 ## Stealth mode
 
@@ -81,6 +93,6 @@ entire tool surface is identical across modes.
 
 ## Status
 
-v1 + v2: logged-in browser control, local selector memory, stealth-mode backend.
-Roadmap: persistent-Chrome attach mode, cookies/storage + network tools, semantic recall
-over the memory.
+v1 + v2: logged-in browser control, local selector memory, stealth-mode backend, native
+paywall bypass, attached-CDP launch mode. Roadmap: cookies/storage + network tools,
+semantic recall over the memory.

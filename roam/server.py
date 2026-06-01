@@ -89,6 +89,9 @@ async def _cdp(method: str, params: dict | None = None):
 async def _recall(url: str | None = None): return await _ctl().recall(url)
 @tool
 async def _forget(domain: str): return await _ctl().forget(domain)
+@tool
+async def _bypass(enable: bool = True, rules_dir: str | None = None):
+    return _ctl().set_bypass(enable, rules_dir)
 
 
 # ---- screenshot is special: returns an inline image to the agent ----
@@ -107,7 +110,7 @@ _REGISTRY = {
     "select": _select, "hover": _hover, "scroll": _scroll, "read": _read, "eval": _eval,
     "console": _console, "wait": _wait, "tabs": _tabs, "new_tab": _new_tab,
     "switch_tab": _switch_tab, "close_tab": _close_tab, "cdp": _cdp,
-    "recall": _recall, "forget": _forget,
+    "recall": _recall, "forget": _forget, "bypass": _bypass,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 

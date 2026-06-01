@@ -1,11 +1,13 @@
 import asyncio
 import os
+import re
 import subprocess
 from collections import deque
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 from .errors import RoamError
 from .snapshot import SNAPSHOT_JS, build_outline
 from .memory import SelectorMemory, REMEMBER_JS, format_manual
+from .bypass import PaywallBypass
 
 
 class BrowserController:
@@ -23,6 +25,9 @@ class BrowserController:
         self.console_buf = deque(maxlen=500)
         self.memory = SelectorMemory(
             os.path.join(os.path.dirname(cfg.profile_dir) or ".", "memory.db"))
+        self.bypass_on = bool(cfg.bypass)
+        self._bypass = PaywallBypass(cfg.bypass_rules_dir) if cfg.bypass else None
+        self._routed = set()     # page ids with a bypass route installed
 
     # ---- launch seam (the ONLY thing the two modes differ on) ----
     def _profile_dir(self):
@@ -169,6 +174,8 @@ class BrowserController:
 
     async def goto(self, url, wait="load"):
         page = await self.page()
+        if self.bypass_on and self._bypass is not None:
+            await self._apply_bypass(page, url)
         states = {"load": "load", "domcontentloaded": "domcontentloaded", "none": "commit"}
         try:
             await page.goto(url, wait_until=states.get(wait, "load"))
@@ -190,6 +197,40 @@ class BrowserController:
         page = await self.current_page()
         await page.reload()
         return {"url": page.url, "title": await page.title()}
+
+    # ---- native paywall bypass (no extension) ----
+    def set_bypass(self, on=True, rules_dir=None):
+        self.bypass_on = bool(on)
+        if on and self._bypass is None:
+            self._bypass = PaywallBypass(rules_dir or self.cfg.bypass_rules_dir)
+        return {"bypass": self.bypass_on}
+
+    async def _apply_bypass(self, page, url):
+        rule = self._bypass.rule_for(url)
+        try:
+            sess = await self._ctx.new_cdp_session(page)
+            await sess.send("Network.setUserAgentOverride", {"userAgent": rule["ua"]})
+        except Exception:
+            pass
+        if rule["clear_cookies"]:
+            try:
+                await self._ctx.clear_cookies(domain=rule["host"])
+            except Exception:
+                pass
+        if id(page) not in self._routed:
+            pats = PaywallBypass.compile_blocks(rule["block"])
+
+            async def _block(route):
+                if any(rx.search(route.request.url) for rx in pats):
+                    await route.abort()
+                else:
+                    await route.continue_()
+
+            try:
+                await page.route("**/*", _block)
+                self._routed.add(id(page))
+            except Exception:
+                pass
 
     # ---- observation: snapshot ----
     async def snapshot(self, interactive_only=True, selector=None):
