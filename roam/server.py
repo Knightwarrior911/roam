@@ -93,6 +93,9 @@ async def _scroll(direction: str | None = None, ref: str | None = None, tab: int
 async def _read(selector: str | None = None, ref: str | None = None, tab: int | None = None):
     return await _ctl().read(selector, ref, tab=tab)
 @tool
+async def _read_markdown(selector: str | None = None, tab: int | None = None):
+    return await _ctl().read_markdown(selector, tab=tab)
+@tool
 async def _eval(js: str, tab: int | None = None): return await _ctl().eval_js(js, tab=tab)
 @tool
 async def _console(level: str | None = None, tail: int = 50, tab: int | None = None):
@@ -183,7 +186,7 @@ _REGISTRY = {
     "recall": _recall, "forget": _forget, "bypass": _bypass,
     "import_cookies": _import_cookies, "bridge": _bridge, "bridge_status": _bridge_status,
     "save_manual": _save_manual, "recall_manual": _recall_manual, "forget_manual": _forget_manual,
-    "stealth_audit": _stealth_audit,
+    "stealth_audit": _stealth_audit, "read_markdown": _read_markdown,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 

@@ -151,6 +151,11 @@ class BridgeBrowser:
     async def read(self, selector=None, ref=None, tab=None):
         return (await self.bridge.call("text", self._t({"selector": selector}, tab)))["text"]
 
+    async def read_markdown(self, selector=None, tab=None):
+        from .markdown import to_markdown
+        r = await self.bridge.call("clean_html", self._t({"selector": selector}, tab))
+        return to_markdown(r.get("html", ""))
+
     async def eval_js(self, js, tab=None):
         return (await self.bridge.call("eval", self._t({"js": js}, tab)))["value"]
 
@@ -173,9 +178,8 @@ class BridgeBrowser:
         return (await self.bridge.call("status"))["url"]
 
     async def stealth_audit(self, tab=None):
-        from .stealth import AUDIT_JS, audit_verdict
-        r = await self.bridge.call("eval", self._t({"js": "(" + AUDIT_JS + ")()"}, tab))
-        return audit_verdict(r.get("value") if isinstance(r, dict) else r)
+        from .stealth import audit_verdict
+        return audit_verdict(await self.bridge.call("audit", self._t({}, tab)))
 
     async def tabs(self):
         return (await self.bridge.call("tabs"))["tabs"]

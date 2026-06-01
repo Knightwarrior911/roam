@@ -75,6 +75,12 @@ async def test_read_page_and_element(ctl):
     assert cell.strip() == "one"
 
 
+async def test_read_markdown(ctl):
+    md = await ctl.read_markdown()
+    assert "Roam Test Page" in md          # <h1> -> markdown heading
+    assert "one" in md and "two" in md      # table content preserved
+
+
 async def test_eval_returns_value(ctl):
     assert await ctl.eval_js("document.title") == "Roam Fixture"
     assert await ctl.eval_js("return 6 * 7") == 42

@@ -52,6 +52,23 @@ function SNAPSHOT_FN(interactiveOnly) {
   (function walk(el){ for (const c of el.children){ const vis = c.offsetParent !== null || c.tagName==='OPTION'; if (vis && (!interactiveOnly || isI(c))){ n++; const r='e'+n; c.setAttribute('data-roam-ref',r); out.push('- '+role(c)+(name(c)?' "'+name(c)+'"':'')+viewOf(c)+' [ref='+r+']'); } walk(c);} })(document.body);
   return out.join('\n') || '(no elements)';
 }
+function CLEAN_FN(selector) {
+  const doc = document.cloneNode(true);
+  doc.querySelectorAll('script,style,noscript,iframe,svg,template,link,form').forEach(e => e.remove());
+  const junk = ['header','footer','nav','aside','[role="navigation"]','[role="banner"]','[role="contentinfo"]','.nav','.navbar','.sidebar','.menu','.ad','.ads','.advert','.advertisement','.social','.share','.breadcrumbs','.cookie','.popup','.modal','.newsletter','.promo','.related','.recommended','[class*="paywall" i]','[id*="comments" i]','[class*="comments" i]'].join(',');
+  doc.querySelectorAll(junk).forEach(e => e.remove());
+  const abs = (el, a) => { try { el.setAttribute(a, new URL(el.getAttribute(a), location.href).href); } catch (e) {} };
+  doc.querySelectorAll('a[href]').forEach(a => abs(a, 'href'));
+  doc.querySelectorAll('img[src]').forEach(i => abs(i, 'src'));
+  const root = (selector && doc.querySelector(selector)) || doc.querySelector('article') || doc.querySelector('[role="main"]') || doc.querySelector('main') || doc.querySelector('#main') || doc.body;
+  return root ? root.innerHTML : '';
+}
+function PROBE_FN() {
+  const n = navigator, w = window; let v = null;
+  try { const gl = document.createElement('canvas').getContext('webgl'); const e = gl && gl.getExtension('WEBGL_debug_renderer_info'); v = e ? gl.getParameter(e.UNMASKED_VENDOR_WEBGL) : null; } catch (e) {}
+  const av = Object.keys(w).filter(k => /cdc_|\$cdc|selenium|webdriver|__driver|__nightmare|domAutomation|__playwright|__puppeteer/i.test(k));
+  return { webdriver: n.webdriver === undefined ? "undefined" : n.webdriver, has_chrome: !!w.chrome, plugins: n.plugins ? n.plugins.length : 0, languages: n.languages || [], webgl_vendor: v, automation_vars: av, headless_ua: / HeadlessChrome/.test(n.userAgent), ua: (n.userAgent || "").slice(0, 90) };
+}
 async function inject(tabId, fn, ...args) {
   const [res] = await chrome.scripting.executeScript({ target: { tabId }, func: fn, args });
   return res.result;
@@ -121,6 +138,8 @@ async function handleCommand(msg) {
         try { const r = await chrome.debugger.sendCommand({ tabId: tid }, p.cdpMethod, p.cdpParams || {}); return reply({ result: r }); }
         finally { try { await chrome.debugger.detach({ tabId: tid }); } catch (_) {} }
       }
+      case "clean_html": return reply({ html: await inject(tid, CLEAN_FN, p.selector || null) });
+      case "audit": return reply(await inject(tid, PROBE_FN));
       case "reload_extension": { setTimeout(() => chrome.runtime.reload(), 200); return reply({ reloading: true }); }
       default: return reply(null, "unknown method: " + msg.method);
     }

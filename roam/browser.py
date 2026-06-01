@@ -427,6 +427,12 @@ class BrowserController:
         except Exception as e:
             raise RoamError("EVAL_ERROR", str(e), "")
 
+    async def read_markdown(self, selector=None, tab=None):
+        from .markdown import CLEAN_HTML_JS, to_markdown
+        page = await self.current_page(tab)
+        html = await page.evaluate(CLEAN_HTML_JS, selector)
+        return to_markdown(html)
+
     async def screenshot(self, full=False, selector=None, tab=None):
         page = await self.current_page(tab)
         if selector:

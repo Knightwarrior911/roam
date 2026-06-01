@@ -2,5 +2,6 @@ mcp>=1.2.0
 playwright>=1.44.0
 patchright>=1.44.0        # stealth-mode backend (lazy-imported; only needed for mode=stealth)
 websockets>=12.0          # bridge server (extension <-> Roam); only needed for bridge mode
+markdownify>=0.11         # read_markdown: clean page HTML -> LLM-ready markdown
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
