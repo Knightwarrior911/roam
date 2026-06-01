@@ -19,8 +19,9 @@ class Config:
     mode: str = "logged-in"   # "logged-in" (Playwright) | "stealth" (patchright)
     executable_path: str | None = None  # stealth-Chromium binary (e.g. CloakBrowser); overrides channel
     extensions: list = field(default_factory=list)  # unpacked extension dirs to load (headed only)
-    bypass: bool = False              # native paywall bypass (Googlebot UA + block vendor scripts)
+    bypass: bool = False              # native paywall bypass (BPC engine)
     bypass_rules_dir: str | None = None  # path to Bypass Paywalls Clean source (for per-site rules)
+    bypass_clear_cookies: bool = True    # clear cookies on known paywalled sites (BPC default; resets meters)
 
 
 def load_config() -> Config:
@@ -31,7 +32,7 @@ def load_config() -> Config:
         data = json.loads(f.read_text(encoding="utf-8"))
         for k in ("headless", "channel", "profile_dir", "default_timeout_ms",
                   "viewport", "mode", "executable_path", "extensions",
-                  "bypass", "bypass_rules_dir"):
+                  "bypass", "bypass_rules_dir", "bypass_clear_cookies"):
             if k in data:
                 setattr(cfg, k, data[k])
     return cfg

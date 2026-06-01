@@ -7,7 +7,7 @@ from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 from .errors import RoamError
 from .snapshot import SNAPSHOT_JS, build_outline
 from .memory import SelectorMemory, REMEMBER_JS, format_manual
-from .bypass import PaywallBypass
+from .bypass import PaywallBypass, CLEANUP_JS
 
 
 class BrowserController:
@@ -28,6 +28,7 @@ class BrowserController:
         self.bypass_on = bool(cfg.bypass)
         self._bypass = PaywallBypass(cfg.bypass_rules_dir) if cfg.bypass else None
         self._routed = set()     # page ids with a bypass route installed
+        self._bypass_rule = None # last applied rule (for post-nav cleanup)
 
     # ---- launch seam (the ONLY thing the two modes differ on) ----
     def _profile_dir(self):
@@ -181,6 +182,8 @@ class BrowserController:
             await page.goto(url, wait_until=states.get(wait, "load"))
         except PWTimeout as e:
             raise RoamError("NAV_TIMEOUT", str(e), "raise timeout or check the url")
+        if self.bypass_on and self._bypass is not None:
+            await self._run_cleanup(page)   # strip overlays / unblur / reveal article
         return {"url": page.url, "title": await page.title()}
 
     async def back(self):
@@ -207,30 +210,58 @@ class BrowserController:
 
     async def _apply_bypass(self, page, url):
         rule = self._bypass.rule_for(url)
-        try:
-            sess = await self._ctx.new_cdp_session(page)
-            await sess.send("Network.setUserAgentOverride", {"userAgent": rule["ua"]})
-        except Exception:
-            pass
-        if rule["clear_cookies"]:
+        self._bypass_rule = rule
+        if rule is None:               # unknown site: leave it completely alone
+            return
+        if rule["ua"]:
+            try:
+                sess = await self._ctx.new_cdp_session(page)
+                await sess.send("Network.setUserAgentOverride", {"userAgent": rule["ua"]})
+            except Exception:
+                pass
+        if rule["headers"]:
+            try:
+                await page.set_extra_http_headers(rule["headers"])
+            except Exception:
+                pass
+        if self.cfg.bypass_clear_cookies and rule["clear_cookies"]:
             try:
                 await self._ctx.clear_cookies(domain=rule["host"])
             except Exception:
                 pass
+        for name in rule["drop_cookies"]:
+            try:
+                await self._ctx.clear_cookies(name=name, domain=rule["host"])
+            except Exception:
+                pass
         if id(page) not in self._routed:
-            pats = PaywallBypass.compile_blocks(rule["block"])
+            blocks = PaywallBypass.compile_patterns(rule["block"])
+            allows = PaywallBypass.compile_patterns(rule["allow"])
 
-            async def _block(route):
-                if any(rx.search(route.request.url) for rx in pats):
+            async def _route(route):
+                u = route.request.url
+                if any(rx.search(u) for rx in blocks) and not any(rx.search(u) for rx in allows):
                     await route.abort()
                 else:
                     await route.continue_()
 
             try:
-                await page.route("**/*", _block)
+                await page.route("**/*", _route)
                 self._routed.add(id(page))
             except Exception:
                 pass
+
+    async def _run_cleanup(self, page):
+        if not self._bypass_rule:
+            return
+        opts = {"clear_lclstrg": bool(self._bypass_rule.get("clear_lclstrg"))}
+        for i in range(2):              # two passes catch overlays injected after load
+            try:
+                await page.evaluate(CLEANUP_JS, opts)
+            except Exception:
+                pass
+            if i == 0:
+                await page.wait_for_timeout(700)
 
     # ---- observation: snapshot ----
     async def snapshot(self, interactive_only=True, selector=None):

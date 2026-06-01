@@ -70,17 +70,31 @@ paywalls specifically, you don't need an extension at all, see below.
 
 ## Paywall bypass (native, no extension)
 
-`bypass: true` replicates Bypass Paywalls Clean's core tactics directly, no extension and
-works headless: it presents as **Googlebot** (which many metered sites serve full content
-to) and **blocks the paywall/metering vendor scripts** (Piano, Poool, Tinypass, Cxense,
-Zephr, etc.). Point `bypass_rules_dir` at a Bypass Paywalls Clean checkout to pick up its
-per-site `useragent`/`block_regex` rules; otherwise a curated default covers the common
-vendors. Cookies are left intact by default so your logins survive. Toggle at runtime with
-the `bypass` tool.
+`bypass: true` captures Bypass Paywalls Clean's engine directly, no extension and works
+headless (Chrome 146 blocks loading the real extension). It reads BPC's own per-site rules
+from `bypass_rules_dir` (a BPC checkout) and acts **only on sites BPC knows** — every other
+site is left completely untouched, so normal logged-in browsing is never disrupted.
+
+On a known paywalled site it replicates BPC's two halves:
+- **Request layer** (per `background.js`): spoof the crawler User-Agent, and for `googlebot`
+  also send `Referer: https://www.google.com/` + `X-Forwarded-For: 66.249.66.1`; honour
+  `referer` / `random_ip`; block the paywall/metering vendor scripts (`block_regex` +
+  curated defaults, with `exception` allow-list); strip cookies unless `allow_cookies`
+  (resets metered counters), honouring `remove_cookies_select_drop`.
+- **DOM layer** (per `contentScript.js`): unlock scroll, remove blur filters and fixed
+  full-screen overlays, delete common paywall elements, reveal hidden article text, and
+  clear localStorage when `cs_clear_lclstrg` — run twice to catch late-injected overlays.
 
 ```json
-{ "bypass": true, "bypass_rules_dir": "C:\\path\\to\\bypass-paywalls-chrome-clean" }
+{ "bypass": true,
+  "bypass_rules_dir": "C:\\path\\to\\bypass-paywalls-chrome-clean",
+  "bypass_clear_cookies": true }
 ```
+
+Set `bypass_clear_cookies: false` to never clear cookies (keep every login at the cost of
+metered resets). Toggle at runtime with the `bypass` tool. Honest limit: BPC's bespoke
+per-site article reconstruction (`ld_json`/`cs_code` DOMPurify rebuilds for a minority of
+sites) is approximated by the generic reveal, not ported verbatim.
 
 ## Stealth mode
 
