@@ -70,12 +70,29 @@ gap proven live on ft.com (headless got "Just a moment…"; headed cleared it).
   throwaway/separate profile by default (anonymous posture, not your logged-in identity).
   Headless allowed (the point).
 
-**No new tools.** Same surface; only the backend differs. `mode` set via config or a launch
-arg on `open`.
+**No new tools.** Same surface; only the backend differs. `mode` set via config.
 
-**Validation:** stealth mode launches + loads a normal page (deterministic test). Real
-anti-bot proof is a live target, so re-run the ft.com headless check under stealth and record
-whether the Cloudflare interstitial clears (documented, not a CI assertion).
+**Two stealth tiers (added after live testing):**
+1. **patchright** (free baseline, default stealth backend) — suppresses *passive* automation
+   fingerprints (navigator.webdriver, CDP `Runtime.enable` leaks). Defeats sites doing simple
+   bot detection. Keeps the whole Playwright tool surface.
+2. **`executable_path`** (config) — point Roam at a real stealth-Chromium **binary**
+   (e.g. CloakBrowser's, which the user installs; non-redistributable). Overrides `channel`.
+   This is what beats hard targets; patchright alone does not.
+
+**Validation (live, ft.com — honest result):**
+- Headless vanilla Playwright: blocked by Cloudflare ("Just a moment…").
+- **Headless patchright stealth: STILL blocked** — Cloudflare's *managed challenge* is not
+  defeated by passive fingerprint suppression alone.
+- **Headed real Chrome (`mode: logged-in`, `headless: false`): clears it** (proven in v1 demo).
+- For headless against Cloudflare-managed-challenge sites, the path is the `executable_path`
+  stealth binary (tier 2), and/or residential proxy + Turnstile handling (out of scope).
+- Deterministic CI test: stealth (patchright) backend launches + drives the full tool surface
+  on a local fixture (`test_stealth.py`); real anti-bot is environment-dependent, not asserted.
+
+**Honest takeaway:** stealth mode is a real backend swap that helps against passive detection
+and provides the binary-swap seam for hard targets, but it is **not** a magic Cloudflare
+bypass. For logged-in first-party work, headed `logged-in` mode remains the reliable path.
 
 ## Out of scope (still parked)
 

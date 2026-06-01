@@ -19,19 +19,37 @@ class BrowserController:
         self.memory = SelectorMemory(
             os.path.join(os.path.dirname(cfg.profile_dir) or ".", "memory.db"))
 
-    # ---- launch seam (v2 stealth swaps ONLY this method) ----
+    # ---- launch seam (the ONLY thing the two modes differ on) ----
+    def _profile_dir(self):
+        # stealth = a separate, throwaway/anonymous profile (be-nobody),
+        # never the logged-in identity (be-you).
+        if self.cfg.mode == "stealth":
+            return self.cfg.profile_dir + "_stealth"
+        return self.cfg.profile_dir
+
+    async def _start_playwright(self):
+        if self.cfg.mode == "stealth":
+            # patchright is a drop-in, Playwright-API-compatible stealth fork, so the
+            # entire tool surface works unchanged; only the driver import differs.
+            from patchright.async_api import async_playwright as stealth_pw
+            return await stealth_pw().start()
+        return await async_playwright().start()
+
     async def _launch(self):
+        kwargs = dict(user_data_dir=self._profile_dir(), headless=self.cfg.headless,
+                      viewport=self.cfg.viewport)
+        # executable_path (a stealth Chromium binary) and channel are mutually exclusive
+        if self.cfg.executable_path:
+            kwargs["executable_path"] = self.cfg.executable_path
+        else:
+            kwargs["channel"] = self.cfg.channel
         try:
-            self._pw = await async_playwright().start()
-            self._ctx = await self._pw.chromium.launch_persistent_context(
-                user_data_dir=self.cfg.profile_dir,
-                channel=self.cfg.channel,
-                headless=self.cfg.headless,
-                viewport=self.cfg.viewport,
-            )
+            self._pw = await self._start_playwright()
+            self._ctx = await self._pw.chromium.launch_persistent_context(**kwargs)
         except Exception as e:
-            raise RoamError("CHROME_LAUNCH_FAILED", str(e),
-                            "run: python -m playwright install chrome")
+            hint = ("run: python -m patchright install chrome" if self.cfg.mode == "stealth"
+                    else "run: python -m playwright install chrome")
+            raise RoamError("CHROME_LAUNCH_FAILED", str(e), hint)
         self._ctx.set_default_timeout(self.cfg.default_timeout_ms)
         self._ctx.on("page", lambda p: self._register_page(p))
         existing = self._ctx.pages or [await self._ctx.new_page()]

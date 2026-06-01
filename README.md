@@ -52,7 +52,24 @@ persists in `%LOCALAPPDATA%\Roam\profile`. Your everyday Chrome is never touched
   "viewport": {"width": 1280, "height": 800} }
 ```
 
+## Memory (recall what you've used)
+
+Every element Roam successfully clicks or types into is remembered locally with a durable
+selector, keyed by site (in `%LOCALAPPDATA%\Roam\memory.db`, never storing typed values).
+On a return visit, `recall` returns the saved "manual" so the agent can act without
+re-snapshotting; `forget(domain)` clears a site. Roam's own private, growing action library.
+
+## Stealth mode
+
+`mode: "stealth"` swaps the backend to [patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright)
+(a Playwright-compatible stealth fork), in a separate anonymous profile. It defeats passive
+bot detection. It does **not**, on its own, clear Cloudflare *managed challenges* headless
+(tested on ft.com). For hard targets, set `executable_path` to a stealth-Chromium binary
+(e.g. CloakBrowser, installed separately), or use the default `logged-in` mode headed. The
+entire tool surface is identical across modes.
+
 ## Status
 
-v1: logged-in browser control. Roadmap: local selector memory, persistent-Chrome mode,
-optional stealth mode (same tools, undetected backend).
+v1 + v2: logged-in browser control, local selector memory, stealth-mode backend.
+Roadmap: persistent-Chrome attach mode, cookies/storage + network tools, semantic recall
+over the memory.
