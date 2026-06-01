@@ -11,12 +11,20 @@ no API key. One process that lives as long as your session.
 
 ## Tools
 
-`open · goto · back · forward · reload · snapshot · click · hover · type · select · press ·
-scroll · read · eval · screenshot · console · wait · tabs · new_tab · switch_tab ·
-close_tab · cdp`
+Browsing: `open · goto · back · forward · reload · snapshot · click · hover · type · select ·
+press · scroll · read · eval · screenshot · console · wait · cdp` — plus concurrent
+multi-tab (`tabs · new_tab · switch_tab · close_tab`, every tool takes a `tab` id).
 
-Superset of browsermcp's 12-tool surface. Elements come from `snapshot` as stable
-`[ref=eN]` handles; `click`/`type` also take screen coordinates as a vision fallback.
+Research + robustness: `read_markdown` (LLM-ready markdown), `find_links` (by intent),
+`web_search` (operator-aware), `dismiss_popups` (cookie/consent/modals), `stealth_audit`
+(measure detectability), `heal` (self-healing selectors), `recall`/`save_manual` (selector
+memory + action manuals), `bypass` (paywall), `import_cookies`, `bridge` (drive your real
+browser).
+
+Elements come from `snapshot` as stable `[ref=eN]` handles (with `(above)`/`(below)` viewport
+markers); `click`/`type` also take screen coordinates as a vision fallback. A **`roam-research`
+Claude skill** (in `~/.claude/skills/roam-research`) drives these tools for cited multi-page
+research (filings, IR pages, market research).
 
 ## Setup
 
