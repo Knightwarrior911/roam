@@ -51,3 +51,37 @@ def test_format_manual(tmp_path):
     m.record("https://x.com/p", "textbox", "Email", "#email", ts=1)
     out = format_manual(m.recall(domain="x.com"))
     assert "x.com" in out and "#email" in out and "textbox" in out
+
+
+# ---- action manuals ----
+def test_save_and_get_manual(tmp_path):
+    m = _mem(tmp_path)
+    steps = [{"action": "goto", "url": "x"}, {"action": "click", "ref": "e1"}]
+    m.save_manual("https://x.com/p", "login", steps, ts=1)
+    got = m.get_manual(url="https://x.com/p", name="login")
+    assert got["steps"] == steps and got["hits"] == 1
+
+
+def test_save_manual_increments_and_updates(tmp_path):
+    m = _mem(tmp_path)
+    m.save_manual("https://x.com/", "go", [{"a": 1}], ts=1)
+    m.save_manual("https://x.com/", "go", [{"a": 2}], ts=2)
+    g = m.get_manual(domain="x.com", name="go")
+    assert g["hits"] == 2 and g["steps"] == [{"a": 2}]
+
+
+def test_list_manuals_by_domain(tmp_path):
+    m = _mem(tmp_path)
+    m.save_manual("https://x.com/", "a", [{}], ts=1)
+    m.save_manual("https://x.com/", "b", [{}], ts=1)
+    assert len(m.get_manual(domain="x.com")) == 2
+
+
+def test_forget_manual(tmp_path):
+    m = _mem(tmp_path)
+    m.save_manual("https://x.com/", "a", [{}], ts=1)
+    m.save_manual("https://x.com/", "b", [{}], ts=1)
+    assert m.forget_manual("x.com", "a") == 1
+    assert len(m.get_manual(domain="x.com")) == 1
+    assert m.forget_manual("x.com") == 1
+    assert m.get_manual(domain="x.com") == []

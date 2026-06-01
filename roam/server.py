@@ -1,13 +1,33 @@
 import functools
+import os
 from mcp.server.fastmcp import FastMCP, Image
 from .browser import BrowserController
 from .config import load_config
 from .errors import RoamError, ok, err
+from .memory import SelectorMemory, format_manual
 
 mcp = FastMCP("roam")
 _controller = None
 _bridge_srv = None       # bridge.Bridge (WS server) when bridge mode is on
 _bridge_browser = None   # bridge.BridgeBrowser, used while the extension is connected
+_mem = None              # local selector/manual memory, shared across browser backends
+
+
+def _memory():
+    global _mem
+    if _mem is None:
+        cfg = load_config()
+        _mem = SelectorMemory(os.path.join(os.path.dirname(cfg.profile_dir) or ".", "memory.db"))
+    return _mem
+
+
+async def _current_url(url=None):
+    if url:
+        return url
+    try:
+        return await _ctl().url()
+    except Exception:
+        return None
 
 
 def _ctl():
@@ -92,9 +112,25 @@ async def _close_tab(id: str): return await _ctl().close_tab(id)
 async def _cdp(method: str, params: dict | None = None, tab: int | None = None):
     return await _ctl().cdp(method, params, tab=tab)
 @tool
-async def _recall(url: str | None = None): return await _ctl().recall(url)
+async def _recall(url: str | None = None):
+    url = await _current_url(url)
+    rows = _memory().recall(url=url)
+    return {"manual": rows, "text": format_manual(rows)}
 @tool
-async def _forget(domain: str): return await _ctl().forget(domain)
+async def _forget(domain: str):
+    return {"forgotten": _memory().forget(domain)}
+@tool
+async def _save_manual(name: str, steps: list, url: str | None = None):
+    url = await _current_url(url)
+    _memory().save_manual(url, name, steps)
+    return {"saved": name, "steps": len(steps), "site": (url or "")}
+@tool
+async def _recall_manual(name: str | None = None, url: str | None = None):
+    url = await _current_url(url)
+    return {"manuals": _memory().get_manual(url=url, name=name)}
+@tool
+async def _forget_manual(domain: str, name: str | None = None):
+    return {"forgotten": _memory().forget_manual(domain, name)}
 @tool
 async def _bypass(enable: bool = True, rules_dir: str | None = None):
     return _ctl().set_bypass(enable, rules_dir)
@@ -143,6 +179,7 @@ _REGISTRY = {
     "switch_tab": _switch_tab, "close_tab": _close_tab, "cdp": _cdp,
     "recall": _recall, "forget": _forget, "bypass": _bypass,
     "import_cookies": _import_cookies, "bridge": _bridge, "bridge_status": _bridge_status,
+    "save_manual": _save_manual, "recall_manual": _recall_manual, "forget_manual": _forget_manual,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 

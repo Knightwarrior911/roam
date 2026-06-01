@@ -316,6 +316,9 @@ class BrowserController:
     async def forget(self, domain):
         return {"forgotten": self.memory.forget(domain)}
 
+    async def url(self):
+        return (await self.current_page()).url
+
     async def import_cookies(self, domain, source="edge"):
         """Load a site's session cookies from a local browser (edge/chrome) so Roam
         browses as the logged-in you. Stays on this machine."""

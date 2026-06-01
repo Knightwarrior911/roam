@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import time
@@ -54,6 +55,13 @@ class SelectorMemory:
                     hits INTEGER DEFAULT 1, last_ts INTEGER,
                     PRIMARY KEY(domain, path, role, name))"""
             )
+            # action manuals: a named, ordered sequence of steps per site (the moat).
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS manuals(
+                    domain TEXT, name TEXT, steps TEXT,
+                    hits INTEGER DEFAULT 1, last_ts INTEGER,
+                    PRIMARY KEY(domain, name))"""
+            )
 
     def _conn(self):
         c = sqlite3.connect(self.db_path)
@@ -94,6 +102,47 @@ class SelectorMemory:
     def forget(self, domain):
         with self._conn() as c:
             return c.execute("DELETE FROM selectors WHERE domain=?", (domain,)).rowcount
+
+    # ---- action manuals: named multi-step sequences per site ----
+    def save_manual(self, url, name, steps, ts=None):
+        domain = _key(url)[0] if "://" in (url or "") else (url or "")
+        ts = ts if ts is not None else int(time.time())
+        blob = json.dumps(steps)
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO manuals(domain, name, steps, hits, last_ts)
+                   VALUES(?,?,?,1,?)
+                   ON CONFLICT(domain, name) DO UPDATE SET
+                     hits = hits + 1, steps = excluded.steps, last_ts = excluded.last_ts""",
+                (domain, name, blob, ts))
+
+    def get_manual(self, url=None, name=None, domain=None):
+        if url and "://" in url:
+            domain = _key(url)[0]
+        with self._conn() as c:
+            if name is not None:
+                r = c.execute("SELECT * FROM manuals WHERE domain=? AND name=?",
+                              (domain, name)).fetchone()
+                if not r:
+                    return None
+                d = dict(r)
+                d["steps"] = json.loads(d["steps"])
+                return d
+            rows = c.execute("SELECT * FROM manuals WHERE domain=? ORDER BY hits DESC",
+                             (domain,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["steps"] = json.loads(d["steps"])
+            out.append(d)
+        return out
+
+    def forget_manual(self, domain, name=None):
+        with self._conn() as c:
+            if name is not None:
+                return c.execute("DELETE FROM manuals WHERE domain=? AND name=?",
+                                 (domain, name)).rowcount
+            return c.execute("DELETE FROM manuals WHERE domain=?", (domain,)).rowcount
 
 
 def format_manual(rows):

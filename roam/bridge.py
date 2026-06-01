@@ -169,6 +169,9 @@ class BridgeBrowser:
     async def console(self, level=None, tail=50, tab=None):
         return ["(console capture not available over the bridge; use eval to read state)"]
 
+    async def url(self):
+        return (await self.bridge.call("status"))["url"]
+
     async def tabs(self):
         return (await self.bridge.call("tabs"))["tabs"]
 
