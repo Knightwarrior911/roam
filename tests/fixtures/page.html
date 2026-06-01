@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Roam Fixture</title></head>
+<body>
+  <h1 id="title">Roam Test Page</h1>
+  <form id="f" onsubmit="document.getElementById('out').textContent='submitted:'+document.getElementById('q').value;return false;">
+    <input id="q" name="q" placeholder="Query">
+    <button id="go" type="submit">Search</button>
+  </form>
+  <a id="lnk" href="#section2">Jump</a>
+  <select id="sel"><option value="a">Apple</option><option value="b">Banana</option></select>
+  <button id="logbtn" onclick="console.log('clicked-log')">Log</button>
+  <table id="tbl"><thead><tr><th>K</th><th>V</th></tr></thead>
+    <tbody><tr><td>one</td><td>1</td></tr><tr><td>two</td><td>2</td></tr></tbody></table>
+  <div id="out"></div>
+  <div id="section2" style="margin-top:1500px">Bottom</div>
+</body>
+</html>

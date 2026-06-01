@@ -1,0 +1,30 @@
+import json
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+def _home() -> Path:
+    base = os.environ.get("LOCALAPPDATA") or os.path.join(str(Path.home()), ".local", "share")
+    return Path(base) / "Roam"
+
+
+@dataclass
+class Config:
+    headless: bool = False
+    channel: str | None = "chrome"
+    profile_dir: str = ""
+    default_timeout_ms: int = 15000
+    viewport: dict = field(default_factory=lambda: {"width": 1280, "height": 800})
+
+
+def load_config() -> Config:
+    home = _home()
+    cfg = Config(profile_dir=str(home / "profile"))
+    f = home / "config.json"
+    if f.exists():
+        data = json.loads(f.read_text(encoding="utf-8"))
+        for k in ("headless", "channel", "profile_dir", "default_timeout_ms", "viewport"):
+            if k in data:
+                setattr(cfg, k, data[k])
+    return cfg
