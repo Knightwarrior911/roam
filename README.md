@@ -59,6 +59,17 @@ selector, keyed by site (in `%LOCALAPPDATA%\Roam\memory.db`, never storing typed
 On a return visit, `recall` returns the saved "manual" so the agent can act without
 re-snapshotting; `forget(domain)` clears a site. Roam's own private, growing action library.
 
+## Extensions (and a Chrome caveat)
+
+`extensions: ["<unpacked dir>", ...]` loads unpacked extensions. When set, Roam launches
+Chrome itself and attaches over CDP (full flag control), since Playwright otherwise injects
+`--disable-extensions`. **Caveat:** Chrome 137+ disabled command-line extension loading
+(`--load-extension`) for automated launches, and by Chrome ~146 the override flag no longer
+works. So on current Chrome this loads nothing. To use a real extension (e.g. a paywall
+bypasser) the practical routes are: a Roam profile cloned from a Chrome profile that already
+has the extension dev-mode-installed, or replicating the extension's behaviour natively via
+request interception. See the v2 spec.
+
 ## Stealth mode
 
 `mode: "stealth"` swaps the backend to [patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright)

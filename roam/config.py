@@ -18,6 +18,7 @@ class Config:
     viewport: dict = field(default_factory=lambda: {"width": 1280, "height": 800})
     mode: str = "logged-in"   # "logged-in" (Playwright) | "stealth" (patchright)
     executable_path: str | None = None  # stealth-Chromium binary (e.g. CloakBrowser); overrides channel
+    extensions: list = field(default_factory=list)  # unpacked extension dirs to load (headed only)
 
 
 def load_config() -> Config:
@@ -27,7 +28,7 @@ def load_config() -> Config:
     if f.exists():
         data = json.loads(f.read_text(encoding="utf-8"))
         for k in ("headless", "channel", "profile_dir", "default_timeout_ms",
-                  "viewport", "mode", "executable_path"):
+                  "viewport", "mode", "executable_path", "extensions"):
             if k in data:
                 setattr(cfg, k, data[k])
     return cfg

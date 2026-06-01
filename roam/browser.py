@@ -1,4 +1,6 @@
+import asyncio
 import os
+import subprocess
 from collections import deque
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 from .errors import RoamError
@@ -11,6 +13,9 @@ class BrowserController:
         self.cfg = cfg
         self._pw = None
         self._ctx = None
+        self._proc = None        # Chrome subprocess (attached/extension mode)
+        self._browser = None     # connect_over_cdp browser (attached mode)
+        self._debug_port = None  # remote-debugging port of our attached Chrome
         self.pages = {}          # "t1" -> Page
         self.active = None       # "t1"
         self._tab_seq = 0
@@ -35,7 +40,34 @@ class BrowserController:
             return await stealth_pw().start()
         return await async_playwright().start()
 
+    def _ext_args(self):
+        # load unpacked extensions (headed only). Chrome needs both flags so the
+        # listed extensions survive Playwright's default --disable-extensions.
+        paths = [p for p in (self.cfg.extensions or []) if p]
+        if not paths:
+            return []
+        joined = ",".join(paths)
+        return [
+            f"--disable-extensions-except={joined}",
+            f"--load-extension={joined}",
+            # Chrome 137+ blocks --load-extension for automated launches; re-enable it.
+            # Must be the only --disable-features (we drop Playwright's via
+            # ignore_default_args), so re-add the profile-persistence feature it disables.
+            "--disable-features=DisableLoadExtensionCommandLineSwitch,DestroyProfileOnBrowserClose",
+        ]
+
     async def _launch(self):
+        if self.cfg.extensions:
+            await self._launch_attached()   # we own the flags, attach over CDP
+        else:
+            await self._launch_managed()    # Playwright-managed persistent context
+        self._ctx.set_default_timeout(self.cfg.default_timeout_ms)
+        self._ctx.on("page", lambda p: self._register_page(p))
+        existing = self._ctx.pages or [await self._ctx.new_page()]
+        for p in existing:
+            self._register_page(p)
+
+    async def _launch_managed(self):
         kwargs = dict(user_data_dir=self._profile_dir(), headless=self.cfg.headless,
                       viewport=self.cfg.viewport)
         # executable_path (a stealth Chromium binary) and channel are mutually exclusive
@@ -50,11 +82,61 @@ class BrowserController:
             hint = ("run: python -m patchright install chrome" if self.cfg.mode == "stealth"
                     else "run: python -m playwright install chrome")
             raise RoamError("CHROME_LAUNCH_FAILED", str(e), hint)
-        self._ctx.set_default_timeout(self.cfg.default_timeout_ms)
-        self._ctx.on("page", lambda p: self._register_page(p))
-        existing = self._ctx.pages or [await self._ctx.new_page()]
-        for p in existing:
-            self._register_page(p)
+
+    def _chrome_executable(self):
+        if self.cfg.executable_path:
+            return self.cfg.executable_path
+        cands = [
+            os.path.join(os.environ.get("PROGRAMFILES", ""), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("PROGRAMFILES(X86)", ""), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
+        ]
+        for c in cands:
+            if c and os.path.exists(c):
+                return c
+        raise RoamError("CHROME_LAUNCH_FAILED", "chrome.exe not found",
+                        "set executable_path in config")
+
+    async def _launch_attached(self):
+        # Loading unpacked extensions needs full command-line control Playwright won't cede
+        # (it injects --disable-extensions and its own --disable-features, which Chrome honors
+        # over ours). So launch Chrome ourselves with clean flags and attach over CDP.
+        import socket
+        import urllib.request
+        joined = ",".join(p for p in self.cfg.extensions if p)
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        self._debug_port = port
+        args = [self._chrome_executable(),
+                f"--remote-debugging-port={port}",
+                f"--user-data-dir={self._profile_dir()}",
+                f"--load-extension={joined}",
+                f"--disable-extensions-except={joined}",
+                # Chrome 137+ blocks --load-extension for automation; this re-enables it.
+                "--disable-features=DisableLoadExtensionCommandLineSwitch",
+                "--no-first-run", "--no-default-browser-check"]
+        if self.cfg.headless:
+            args.append("--headless=new")
+        try:
+            self._proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            raise RoamError("CHROME_LAUNCH_FAILED", str(e), "set executable_path in config")
+        endpoint = f"http://127.0.0.1:{port}/json/version"
+        for _ in range(60):
+            try:
+                urllib.request.urlopen(endpoint, timeout=1)
+                break
+            except Exception:
+                await asyncio.sleep(0.5)
+        else:
+            raise RoamError("CHROME_LAUNCH_FAILED", "devtools endpoint never came up",
+                            "is chrome already running on this profile?")
+        self._pw = await async_playwright().start()
+        self._browser = await self._pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        self._ctx = (self._browser.contexts[0] if self._browser.contexts
+                     else await self._browser.new_context())
 
     def _register_page(self, page):
         self._tab_seq += 1
@@ -325,10 +407,33 @@ class BrowserController:
     # ---- teardown (idempotent) ----
     async def close(self):
         try:
-            if self._ctx is not None:
+            if self._browser is not None:        # attached (extension) mode
+                await self._browser.close()
+            elif self._ctx is not None:          # managed mode
                 await self._ctx.close()
+        except Exception:
+            pass
         finally:
+            if self._debug_port and os.name == "nt":
+                # Chrome re-parents itself, so a pid-tree kill misses the real process.
+                # Kill precisely by our unique debug port (won't touch the user's Chrome).
+                try:
+                    subprocess.run(["powershell", "-NoProfile", "-Command",
+                        "Get-CimInstance Win32_Process -Filter \"name='chrome.exe'\" | "
+                        f"Where-Object {{$_.CommandLine -like '*remote-debugging-port={self._debug_port}*'}} | "
+                        "ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+                except Exception:
+                    pass
+            if self._proc is not None:
+                try:
+                    self._proc.terminate()
+                except Exception:
+                    pass
+                self._proc = None
+            self._debug_port = None
             self._ctx = None
+            self._browser = None
             self.pages.clear()
             self.active = None
             if self._pw is not None:
