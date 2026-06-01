@@ -77,6 +77,16 @@ def test_list_manuals_by_domain(tmp_path):
     assert len(m.get_manual(domain="x.com")) == 2
 
 
+def test_recall_by_query_ranks_by_intent(tmp_path):
+    m = _mem(tmp_path)
+    m.record("https://x.com/", "button", "Submit order", "#submit", ts=1)
+    m.record("https://x.com/", "textbox", "Search products", "#search", ts=1)
+    r = m.recall(domain="x.com", query="search box")
+    assert r and r[0]["selector"] == "#search"   # overlap on 'search' wins
+    # no overlap -> falls back to all (hits order), never empty
+    assert m.recall(domain="x.com", query="zzz") != []
+
+
 def test_forget_manual(tmp_path):
     m = _mem(tmp_path)
     m.save_manual("https://x.com/", "a", [{}], ts=1)

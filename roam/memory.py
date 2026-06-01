@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 import time
 from urllib.parse import urlparse
@@ -82,7 +83,7 @@ class SelectorMemory:
                 (domain, path, role, name, selector, ts),
             )
 
-    def recall(self, url=None, domain=None):
+    def recall(self, url=None, domain=None, query=None):
         path = None
         if url:
             domain, path = _key(url)
@@ -97,7 +98,18 @@ class SelectorMemory:
                     (domain,)).fetchall()
             else:
                 rows = c.execute("SELECT * FROM selectors ORDER BY hits DESC").fetchall()
-        return [dict(r) for r in rows]
+        out = [dict(r) for r in rows]
+        if query:
+            # rank by intent: token overlap of the query with each element's name+role
+            qtok = set(re.findall(r"\w+", query.lower()))
+
+            def score(r):
+                txt = ((r.get("name") or "") + " " + (r.get("role") or "")).lower()
+                return len(qtok & set(re.findall(r"\w+", txt)))
+
+            ranked = sorted(out, key=lambda r: (score(r), r.get("hits", 0)), reverse=True)
+            return [r for r in ranked if score(r) > 0] or ranked
+        return out
 
     def forget(self, domain):
         with self._conn() as c:

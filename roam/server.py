@@ -112,9 +112,9 @@ async def _close_tab(id: str): return await _ctl().close_tab(id)
 async def _cdp(method: str, params: dict | None = None, tab: int | None = None):
     return await _ctl().cdp(method, params, tab=tab)
 @tool
-async def _recall(url: str | None = None):
+async def _recall(url: str | None = None, query: str | None = None):
     url = await _current_url(url)
-    rows = _memory().recall(url=url)
+    rows = _memory().recall(url=url, query=query)
     return {"manual": rows, "text": format_manual(rows)}
 @tool
 async def _forget(domain: str):
