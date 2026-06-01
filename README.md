@@ -27,12 +27,19 @@ python -m playwright install chrome
 
 ## Connect to Claude Code
 
-```json
-{ "mcpServers": { "roam": { "command": "python", "args": ["-m", "roam"],
-    "cwd": "C:\\Users\\vinit\\roam" } } }
+```bash
+claude mcp add roam -s user -e PYTHONPATH=C:\Users\vinit\roam -- python -m roam
 ```
 
-or: `claude mcp add roam -- python -m roam`
+`PYTHONPATH` points Python at the package (Claude Code's MCP config has no `cwd`
+field). Equivalent JSON for other clients:
+
+```json
+{ "mcpServers": { "roam": { "command": "python", "args": ["-m", "roam"],
+    "env": { "PYTHONPATH": "C:\\Users\\vinit\\roam" } } } }
+```
+
+(Or `pip install -e .` the repo so `python -m roam` works with no `PYTHONPATH`.)
 
 The first browser tool opens Roam's Chrome. Log into a site once there; the login
 persists in `%LOCALAPPDATA%\Roam\profile`. Your everyday Chrome is never touched.
