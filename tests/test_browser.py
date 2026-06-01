@@ -118,3 +118,19 @@ async def test_wait_for_selector(ctl):
 async def test_cdp_escape_hatch(ctl):
     res = await ctl.cdp("Runtime.evaluate", {"expression": "2+3", "returnByValue": True})
     assert res["result"]["value"] == 5
+
+
+# ---- local selector memory (v2) ----
+async def test_memory_records_verified_selector_on_click(ctl):
+    ref = await _ref_for(ctl, "link", "Jump")
+    await ctl.click(element="jump link", ref=ref)
+    r = await ctl.recall()
+    sels = [row["selector"] for row in r["manual"]]
+    assert "#lnk" in sels          # durable selector captured from the element id
+    assert "Jump" in r["text"]     # formatted manual mentions the element
+
+
+async def test_recall_empty_before_any_action(ctl):
+    r = await ctl.recall()
+    assert r["manual"] == []
+    assert "nothing remembered" in r["text"]

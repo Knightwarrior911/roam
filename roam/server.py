@@ -85,6 +85,10 @@ async def _close_tab(id: str): return await _ctl().close_tab(id)
 @tool
 async def _cdp(method: str, params: dict | None = None):
     return await _ctl().cdp(method, params)
+@tool
+async def _recall(url: str | None = None): return await _ctl().recall(url)
+@tool
+async def _forget(domain: str): return await _ctl().forget(domain)
 
 
 # ---- screenshot is special: returns an inline image to the agent ----
@@ -103,6 +107,7 @@ _REGISTRY = {
     "select": _select, "hover": _hover, "scroll": _scroll, "read": _read, "eval": _eval,
     "console": _console, "wait": _wait, "tabs": _tabs, "new_tab": _new_tab,
     "switch_tab": _switch_tab, "close_tab": _close_tab, "cdp": _cdp,
+    "recall": _recall, "forget": _forget,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 

@@ -1,7 +1,9 @@
+import os
 from collections import deque
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 from .errors import RoamError
 from .snapshot import SNAPSHOT_JS, build_outline
+from .memory import SelectorMemory, REMEMBER_JS, format_manual
 
 
 class BrowserController:
@@ -14,6 +16,8 @@ class BrowserController:
         self._tab_seq = 0
         self._refs = set()       # refs valid in the latest snapshot
         self.console_buf = deque(maxlen=500)
+        self.memory = SelectorMemory(
+            os.path.join(os.path.dirname(cfg.profile_dir) or ".", "memory.db"))
 
     # ---- launch seam (v2 stealth swaps ONLY this method) ----
     async def _launch(self):
@@ -114,6 +118,26 @@ class BrowserController:
             return loc.first
         return None
 
+    async def _remember(self, loc):
+        """Best-effort: record a durable selector for a successfully-acted element."""
+        try:
+            info = await loc.evaluate(REMEMBER_JS)
+            if info and info.get("selector"):
+                page = await self.current_page()
+                self.memory.record(page.url, info.get("role", ""),
+                                    info.get("name", ""), info["selector"])
+        except Exception:
+            pass  # memory is best-effort, never breaks an action
+
+    async def recall(self, url=None):
+        if url is None:
+            url = (await self.current_page()).url
+        rows = self.memory.recall(url=url)
+        return {"manual": rows, "text": format_manual(rows)}
+
+    async def forget(self, domain):
+        return {"forgotten": self.memory.forget(domain)}
+
     # ---- interaction ----
     async def click(self, element=None, ref=None, selector=None, x=None, y=None,
                     button="left", count=1):
@@ -125,6 +149,7 @@ class BrowserController:
         if loc is None:
             raise RoamError("BAD_ARGS", "click needs ref, selector, or x/y", "")
         await loc.click(button=button, click_count=count)
+        await self._remember(loc)
         return {"clicked": element or ref or selector}
 
     async def type_text(self, element=None, ref=None, selector=None, text="", submit=False):
@@ -134,6 +159,7 @@ class BrowserController:
         await loc.fill(text)
         if submit:
             await loc.press("Enter")
+        await self._remember(loc)
         return {"typed": text, "submitted": submit}
 
     async def press(self, key):
@@ -146,6 +172,7 @@ class BrowserController:
         if loc is None:
             raise RoamError("BAD_ARGS", "select needs ref or selector", "")
         chosen = await loc.select_option(values or [])
+        await self._remember(loc)
         return {"selected": chosen}
 
     async def hover(self, element=None, ref=None, selector=None):
