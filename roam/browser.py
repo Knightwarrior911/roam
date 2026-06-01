@@ -9,6 +9,7 @@ from .snapshot import SNAPSHOT_JS, build_outline
 from .memory import SelectorMemory, REMEMBER_JS, format_manual
 from .bypass import PaywallBypass, CLEANUP_JS
 from .stealth import STEALTH_JS, STEALTH_ARGS, AUDIT_JS, audit_verdict
+from .heal import FINGERPRINT_EL_JS, RELOCATE_JS
 
 
 class BrowserController:
@@ -303,15 +304,27 @@ class BrowserController:
         return None
 
     async def _remember(self, loc):
-        """Best-effort: record a durable selector for a successfully-acted element."""
+        """Best-effort: record a durable selector + a structural fingerprint for a
+        successfully-acted element (the fingerprint powers self-healing later)."""
         try:
             info = await loc.evaluate(REMEMBER_JS)
             if info and info.get("selector"):
                 page = await self.current_page()
-                self.memory.record(page.url, info.get("role", ""),
-                                    info.get("name", ""), info["selector"])
+                fp = None
+                try:
+                    fp = await loc.evaluate(FINGERPRINT_EL_JS)
+                except Exception:
+                    pass
+                self.memory.record(page.url, info.get("role", ""), info.get("name", ""),
+                                   info["selector"], fingerprint=fp)
         except Exception:
             pass  # memory is best-effort, never breaks an action
+
+    async def relocate(self, fingerprint, tab=None):
+        """Find the element best matching a stored fingerprint in the live DOM (self-heal).
+        Tags it data-roam-ref="heal" and returns its fresh durable selector + score."""
+        page = await self.current_page(tab)
+        return await page.evaluate(RELOCATE_JS, fingerprint)
 
     async def recall(self, url=None):
         if url is None:

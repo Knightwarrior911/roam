@@ -140,3 +140,19 @@ async def test_recall_empty_before_any_action(ctl):
     r = await ctl.recall()
     assert r["manual"] == []
     assert "nothing remembered" in r["text"]
+
+
+async def test_self_heal_relocates_after_redesign(ctl):
+    ref = await _ref_for(ctl, "link", "Jump")
+    await ctl.click(element="jump", ref=ref)            # remembers #lnk + a fingerprint
+    page = await ctl.current_page()
+    fp = ctl.memory.fingerprint_for(url=page.url, role="link", name="Jump")
+    assert fp is not None and fp["tag"] == "a"
+    # simulate a site redesign: the id changes so the cached #lnk selector breaks
+    await page.evaluate("document.getElementById('lnk').id = 'lnk-renamed-xyz'")
+    assert await page.locator("#lnk").count() == 0
+    res = await ctl.relocate(fp)                          # heal by structural similarity
+    assert res["selector"]
+    loc = page.locator(res["selector"])
+    assert await loc.count() >= 1
+    assert (await loc.first.get_attribute("id")) == "lnk-renamed-xyz"

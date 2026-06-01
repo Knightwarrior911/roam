@@ -34,7 +34,7 @@ REMEMBER_JS = r"""
     }
     return parts.join(' > ');
   })();
-  const role = el.getAttribute('role') || el.tagName.toLowerCase();
+  const role = el.getAttribute('role') || ({A:'link',BUTTON:'button',SELECT:'combobox',TEXTAREA:'textbox',INPUT:(el.type==='submit'||el.type==='button')?'button':'textbox'}[el.tagName] || el.tagName.toLowerCase());
   const name = (el.getAttribute('aria-label') || el.getAttribute('placeholder') ||
     el.getAttribute('alt') || (el.innerText || el.textContent || '').trim())
     .replace(/\s+/g, ' ').slice(0, 120);
@@ -53,9 +53,13 @@ class SelectorMemory:
             c.execute(
                 """CREATE TABLE IF NOT EXISTS selectors(
                     domain TEXT, path TEXT, role TEXT, name TEXT, selector TEXT,
-                    hits INTEGER DEFAULT 1, last_ts INTEGER,
+                    hits INTEGER DEFAULT 1, last_ts INTEGER, fingerprint TEXT,
                     PRIMARY KEY(domain, path, role, name))"""
             )
+            try:  # migrate older dbs
+                c.execute("ALTER TABLE selectors ADD COLUMN fingerprint TEXT")
+            except sqlite3.OperationalError:
+                pass
             # action manuals: a named, ordered sequence of steps per site (the moat).
             c.execute(
                 """CREATE TABLE IF NOT EXISTS manuals(
@@ -69,19 +73,39 @@ class SelectorMemory:
         c.row_factory = sqlite3.Row
         return c
 
-    def record(self, url, role, name, selector, ts=None):
+    def record(self, url, role, name, selector, fingerprint=None, ts=None):
         if not selector:
             return
         domain, path = _key(url)
         ts = ts if ts is not None else int(time.time())
+        fp = json.dumps(fingerprint) if fingerprint else None
         with self._conn() as c:
             c.execute(
-                """INSERT INTO selectors(domain, path, role, name, selector, hits, last_ts)
-                   VALUES(?,?,?,?,?,1,?)
+                """INSERT INTO selectors(domain, path, role, name, selector, hits, last_ts, fingerprint)
+                   VALUES(?,?,?,?,?,1,?,?)
                    ON CONFLICT(domain, path, role, name) DO UPDATE SET
-                     hits = hits + 1, selector = excluded.selector, last_ts = excluded.last_ts""",
-                (domain, path, role, name, selector, ts),
+                     hits = hits + 1, selector = excluded.selector, last_ts = excluded.last_ts,
+                     fingerprint = COALESCE(excluded.fingerprint, selectors.fingerprint)""",
+                (domain, path, role, name, selector, ts, fp),
             )
+
+    def fingerprint_for(self, url=None, domain=None, role=None, name=None):
+        if url and "://" in url:
+            domain = _key(url)[0]
+        with self._conn() as c:
+            r = c.execute(
+                "SELECT fingerprint FROM selectors WHERE domain=? AND role=? AND name=? "
+                "AND fingerprint IS NOT NULL ORDER BY hits DESC LIMIT 1",
+                (domain, role, name)).fetchone()
+        return json.loads(r["fingerprint"]) if r and r["fingerprint"] else None
+
+    def update_selector(self, url=None, domain=None, role=None, name=None, selector=None):
+        if url and "://" in url:
+            domain = _key(url)[0]
+        with self._conn() as c:
+            return c.execute(
+                "UPDATE selectors SET selector=? WHERE domain=? AND role=? AND name=?",
+                (selector, domain, role, name)).rowcount
 
     def recall(self, url=None, domain=None, query=None):
         path = None

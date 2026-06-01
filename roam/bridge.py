@@ -181,6 +181,9 @@ class BridgeBrowser:
         from .stealth import audit_verdict
         return audit_verdict(await self.bridge.call("audit", self._t({}, tab)))
 
+    async def relocate(self, fingerprint, tab=None):
+        return await self.bridge.call("relocate", self._t({"fp": fingerprint}, tab))
+
     async def tabs(self):
         return (await self.bridge.call("tabs"))["tabs"]
 

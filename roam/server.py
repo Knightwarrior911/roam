@@ -138,6 +138,17 @@ async def _forget_manual(domain: str, name: str | None = None):
 async def _stealth_audit(tab: int | None = None):
     return await _ctl().stealth_audit(tab=tab)
 @tool
+async def _heal(role: str, name: str, tab: int | None = None):
+    url = await _current_url()
+    fp = _memory().fingerprint_for(url=url, role=role, name=name)
+    if not fp:
+        raise RoamError("NO_FINGERPRINT", f"no remembered fingerprint for {role} {name}",
+                        "act on the element once first so it gets remembered")
+    res = await _ctl().relocate(fp, tab=tab)
+    if res.get("selector"):
+        _memory().update_selector(url=url, role=role, name=name, selector=res["selector"])
+    return res
+@tool
 async def _bypass(enable: bool = True, rules_dir: str | None = None):
     return _ctl().set_bypass(enable, rules_dir)
 @tool
@@ -186,7 +197,7 @@ _REGISTRY = {
     "recall": _recall, "forget": _forget, "bypass": _bypass,
     "import_cookies": _import_cookies, "bridge": _bridge, "bridge_status": _bridge_status,
     "save_manual": _save_manual, "recall_manual": _recall_manual, "forget_manual": _forget_manual,
-    "stealth_audit": _stealth_audit, "read_markdown": _read_markdown,
+    "stealth_audit": _stealth_audit, "read_markdown": _read_markdown, "heal": _heal,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 
