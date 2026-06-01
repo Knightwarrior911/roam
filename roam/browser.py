@@ -8,7 +8,7 @@ from .errors import RoamError
 from .snapshot import SNAPSHOT_JS, build_outline
 from .memory import SelectorMemory, REMEMBER_JS, format_manual
 from .bypass import PaywallBypass, CLEANUP_JS
-from .stealth import STEALTH_JS, AUDIT_JS, audit_verdict
+from .stealth import STEALTH_JS, STEALTH_ARGS, AUDIT_JS, audit_verdict
 
 
 class BrowserController:
@@ -77,6 +77,8 @@ class BrowserController:
     async def _launch_managed(self):
         kwargs = dict(user_data_dir=self._profile_dir(), headless=self.cfg.headless,
                       viewport=self.cfg.viewport)
+        if self.cfg.stealth_harden or self.cfg.mode == "stealth":
+            kwargs["args"] = STEALTH_ARGS
         # executable_path (a stealth Chromium binary) and channel are mutually exclusive
         if self.cfg.executable_path:
             kwargs["executable_path"] = self.cfg.executable_path

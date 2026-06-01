@@ -15,11 +15,23 @@ patched values. It deliberately avoids aggressive fingerprint spoofing that can 
 a detection signal or break rendering.
 """
 
+# Launch flags that reduce automation tells (the safe, broadly-compatible subset).
+STEALTH_ARGS = [
+    "--disable-blink-features=AutomationControlled",   # drops webdriver + the "controlled by automation" banner
+    "--disable-features=IsolateOrigins,site-per-process",
+]
+
 STEALTH_JS = r"""
 (() => {
   try {
     // navigator.webdriver -> undefined (the single biggest automation tell)
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    // strip the HeadlessChrome tell from the JS-visible UA (HTTP header still needs a
+    // CDP override for full coverage; this fixes client-side detection)
+    if (/Headless/.test(navigator.userAgent)) {
+      const ua = navigator.userAgent.replace(/HeadlessChrome/g, 'Chrome').replace(/Headless/g, '');
+      Object.defineProperty(navigator, 'userAgent', { get: () => ua });
+    }
     // a real Chrome has window.chrome
     if (!window.chrome) window.chrome = {};
     if (!window.chrome.runtime) window.chrome.runtime = {};
