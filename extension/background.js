@@ -103,7 +103,22 @@ async function handleCommand(msg) {
       case "text": return reply({ text: await inject(tab.id, (sel) => (sel ? (document.querySelector(sel)||{}).innerText : document.body.innerText) || "", p.selector || null) });
       case "click": return reply({ ok: await inject(tab.id, (ref, sel) => { const el = ref ? document.querySelector('[data-roam-ref="'+ref+'"]') : document.querySelector(sel); if (!el) return false; el.click(); return true; }, p.ref || null, p.selector || null) });
       case "type": return reply({ ok: await inject(tab.id, (ref, sel, text, submit) => { const el = ref ? document.querySelector('[data-roam-ref="'+ref+'"]') : document.querySelector(sel); if (!el) return false; el.focus(); el.value = text; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); if (submit) el.form && el.form.requestSubmit && el.form.requestSubmit(); return true; }, p.ref || null, p.selector || null, p.text || "", !!p.submit) });
-      case "screenshot": { const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }); return reply({ dataUrl }); }
+      case "screenshot": {
+        // chrome.debugger captures even a backgrounded/occluded tab; captureVisibleTab
+        // needs a focused, visible window (fails when nobody's at the screen).
+        try {
+          await chrome.debugger.attach({ tabId: tab.id }, "1.3");
+          const shot = await chrome.debugger.sendCommand({ tabId: tab.id }, "Page.captureScreenshot",
+            { format: "png", captureBeyondViewport: !!p.full, fromSurface: true });
+          await chrome.debugger.detach({ tabId: tab.id });
+          return reply({ dataUrl: "data:image/png;base64," + shot.data });
+        } catch (e) {
+          try { await chrome.debugger.detach({ tabId: tab.id }); } catch (_) {}
+          const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+          return reply({ dataUrl });
+        }
+      }
+      case "reload_extension": { setTimeout(() => chrome.runtime.reload(), 200); return reply({ reloading: true }); }
       case "back": { await chrome.tabs.goBack(tab.id); return reply({ ok: true }); }
       case "forward": { await chrome.tabs.goForward(tab.id); return reply({ ok: true }); }
       case "reload": { await chrome.tabs.reload(tab.id); await waitComplete(tab.id); return reply({ ok: true }); }
