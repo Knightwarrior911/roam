@@ -69,6 +69,19 @@ function PROBE_FN() {
   const av = Object.keys(w).filter(k => /cdc_|\$cdc|selenium|webdriver|__driver|__nightmare|domAutomation|__playwright|__puppeteer/i.test(k));
   return { webdriver: n.webdriver === undefined ? "undefined" : n.webdriver, has_chrome: !!w.chrome, plugins: n.plugins ? n.plugins.length : 0, languages: n.languages || [], webgl_vendor: v, automation_vars: av, headless_ua: / HeadlessChrome/.test(n.userAgent), ua: (n.userAgent || "").slice(0, 90) };
 }
+function RELOCATE_FN(fp) {
+  const bigrams = (s) => { s = String(s || ''); const m = {}; for (let i = 0; i < s.length - 1; i++) { const g = s.slice(i, i + 2); m[g] = (m[g] || 0) + 1; } return m; };
+  const sim = (a, b) => { a = String(a || ''); b = String(b || ''); if (!a && !b) return 1; if (!a || !b) return 0; const A = bigrams(a), B = bigrams(b); let inter = 0, ta = 0, tb = 0; for (const k in A) { ta += A[k]; if (B[k]) inter += Math.min(A[k], B[k]); } for (const k in B) tb += B[k]; return (2 * inter) / ((ta + tb) || 1); };
+  const arrSim = (a, b) => sim((a || []).join(','), (b || []).join(','));
+  const score = (el) => { const attrs = {}; for (const a of el.attributes) attrs[a.name] = a.value; const path = []; let p = el; while (p && p.tagName && p.tagName !== 'BODY' && path.length < 8) { path.unshift(p.tagName.toLowerCase()); p = p.parentElement; } const fa = fp.attrs || {}; let s = 0, n = 0; s += (el.tagName.toLowerCase() === fp.tag ? 1 : 0); n++; s += sim(el.innerText || el.textContent || '', fp.text); n++; s += sim(attrs.class || '', fa.class || ''); n++; s += (attrs.id && fa.id && attrs.id === fa.id) ? 1 : sim(attrs.id || '', fa.id || ''); n++; s += arrSim(path, fp.path); n++; s += arrSim([...el.children].map(c => c.tagName.toLowerCase()), fp.children); n++; return s / n; };
+  let best = null, bestScore = 0;
+  for (const el of document.querySelectorAll('*')) { const sc = score(el); if (sc > bestScore) { bestScore = sc; best = el; } }
+  if (!best || bestScore < 0.5) return { score: Math.round(bestScore * 100) / 100, selector: null };
+  const durable = (el) => { if (el.id) return '#' + CSS.escape(el.id); const parts = []; let node = el; while (node && node.tagName && node.tagName !== 'BODY' && parts.length < 5) { let sel = node.tagName.toLowerCase(); const par = node.parentElement; if (par) { const sib = [...par.children].filter(c => c.tagName === node.tagName); if (sib.length > 1) sel += ':nth-of-type(' + (sib.indexOf(node) + 1) + ')'; } parts.unshift(sel); node = par; } return parts.join(' > '); };
+  document.querySelectorAll('[data-roam-ref="heal"]').forEach(e => e.removeAttribute('data-roam-ref'));
+  best.setAttribute('data-roam-ref', 'heal');
+  return { score: Math.round(bestScore * 100) / 100, selector: durable(best) };
+}
 async function inject(tabId, fn, ...args) {
   const [res] = await chrome.scripting.executeScript({ target: { tabId }, func: fn, args });
   return res.result;
@@ -140,6 +153,7 @@ async function handleCommand(msg) {
       }
       case "clean_html": return reply({ html: await inject(tid, CLEAN_FN, p.selector || null) });
       case "audit": return reply(await inject(tid, PROBE_FN));
+      case "relocate": return reply(await inject(tid, RELOCATE_FN, p.fp));
       case "reload_extension": { setTimeout(() => chrome.runtime.reload(), 200); return reply({ reloading: true }); }
       default: return reply(null, "unknown method: " + msg.method);
     }
