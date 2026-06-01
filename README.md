@@ -9,6 +9,30 @@ and act: snapshot the page, click, type, read, screenshot, run JS, manage tabs.
 Independent of actionbook and browsermcp. No background daemon, no extension, no cloud,
 no API key. One process that lives as long as your session.
 
+## Install (let your AI agent do it)
+
+The easiest path: **point Claude Code (or any coding agent) at this repo and say "set this
+up."** It reads [`AGENTS.md`](AGENTS.md) and installs + registers everything for you:
+
+```
+git clone https://github.com/Knightwarrior911/roam
+# then tell your agent: "set up this repo per AGENTS.md"
+```
+
+Prefer to run it yourself? One command:
+
+```bash
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+# macOS / Linux
+bash scripts/install.sh
+```
+
+The installer finds Python 3.10+, installs the deps + a Chrome for Playwright, runs the
+tests, and registers the `roam` MCP server with Claude Code pointing at this folder. Then
+restart Claude Code and ask it to "open a browser with Roam." Nothing of anyone else's data
+is in this repo — your logins/cookies live only in `%LOCALAPPDATA%\Roam` on your own machine.
+
 ## Tools
 
 Browsing: `open · goto · back · forward · reload · snapshot · click · hover · type · select ·
