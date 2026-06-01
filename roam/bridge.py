@@ -156,6 +156,13 @@ class BridgeBrowser:
         r = await self.bridge.call("clean_html", self._t({"selector": selector}, tab))
         return to_markdown(r.get("html", ""))
 
+    async def dismiss_popups(self, tab=None):
+        return await self.bridge.call("dismiss", self._t({}, tab))
+
+    async def find_links(self, keywords=None, tab=None):
+        r = await self.bridge.call("find_links", self._t({"keywords": keywords or []}, tab))
+        return r.get("links", [])
+
     async def eval_js(self, js, tab=None):
         return (await self.bridge.call("eval", self._t({"js": js}, tab)))["value"]
 

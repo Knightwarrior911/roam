@@ -446,6 +446,19 @@ class BrowserController:
         html = await page.evaluate(CLEAN_HTML_JS, selector)
         return to_markdown(html)
 
+    async def dismiss_popups(self, tab=None):
+        from .popups import DISMISS_JS
+        page = await self.current_page(tab)
+        r1 = await page.evaluate(DISMISS_JS)
+        await page.wait_for_timeout(400)            # a 2nd pass catches late-injected popups
+        r2 = await page.evaluate(DISMISS_JS)
+        return {"clicked": r1["clicked"] + r2["clicked"], "removed": r1["removed"] + r2["removed"]}
+
+    async def find_links(self, keywords=None, tab=None):
+        from .popups import FIND_LINKS_JS
+        page = await self.current_page(tab)
+        return await page.evaluate(FIND_LINKS_JS, keywords or [])
+
     async def screenshot(self, full=False, selector=None, tab=None):
         page = await self.current_page(tab)
         if selector:

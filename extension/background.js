@@ -82,6 +82,22 @@ function RELOCATE_FN(fp) {
   best.setAttribute('data-roam-ref', 'heal');
   return { score: Math.round(bestScore * 100) / 100, selector: durable(best) };
 }
+function DISMISS_FN() {
+  const clicked = [];
+  const known = ['#onetrust-accept-btn-handler','#onetrust-reject-all-handler','#truste-consent-button','#hs-eu-confirmation-button','.cc-allow','.cc-dismiss','#CybotCookiebotDialogBodyButtonAccept','.fc-button.fc-cta-consent','[aria-label="Accept all"]','[aria-label="Close"]','[title="Close"]'];
+  for (const sel of known) { try { const el = document.querySelector(sel); if (el && el.offsetParent !== null) { el.click(); clicked.push(sel); } } catch (e) {} }
+  const re = /^(accept|accept all|accept cookies|agree|i agree|got it|i understand|ok|okay|continue|close|dismiss|no thanks|reject all|allow all|x)$/i;
+  document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]').forEach(b => { const t = (b.innerText || b.value || b.getAttribute('aria-label') || '').trim(); if (re.test(t)) { try { b.click(); clicked.push(t); } catch (e) {} } });
+  let removed = 0;
+  document.querySelectorAll('div,section,aside,dialog,[class*="modal" i],[class*="popup" i],[class*="overlay" i]').forEach(e => { const cs = getComputedStyle(e); const z = parseInt(cs.zIndex) || 0; if ((cs.position === 'fixed' || cs.position === 'sticky') && z >= 100 && e.offsetHeight > window.innerHeight * 0.5 && e.offsetWidth > window.innerWidth * 0.5) { e.remove(); removed++; } });
+  for (const el of [document.documentElement, document.body]) { if (el) { el.style.setProperty('overflow', 'auto', 'important'); el.style.setProperty('position', 'static', 'important'); el.classList.remove('no-scroll', 'modal-open', 'overflow-hidden'); } }
+  return { clicked: clicked.slice(0, 12), removed };
+}
+function FINDLINKS_FN(keywords) {
+  const kw = (keywords || []).map(k => String(k).toLowerCase()); const seen = new Set(); const out = [];
+  document.querySelectorAll('a[href]').forEach(a => { let href; try { href = new URL(a.getAttribute('href'), location.href).href; } catch (e) { return; } if (href.startsWith('javascript:') || href.startsWith('mailto:') || seen.has(href)) return; seen.add(href); const text = (a.innerText || a.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120); const hay = (text + ' ' + href).toLowerCase(); if (!kw.length || kw.some(k => hay.includes(k))) out.push({ text, href }); });
+  return out.slice(0, 120);
+}
 async function inject(tabId, fn, ...args) {
   const [res] = await chrome.scripting.executeScript({ target: { tabId }, func: fn, args });
   return res.result;
@@ -154,6 +170,8 @@ async function handleCommand(msg) {
       case "clean_html": return reply({ html: await inject(tid, CLEAN_FN, p.selector || null) });
       case "audit": return reply(await inject(tid, PROBE_FN));
       case "relocate": return reply(await inject(tid, RELOCATE_FN, p.fp));
+      case "dismiss": { const r1 = await inject(tid, DISMISS_FN); await new Promise(r => setTimeout(r, 400)); const r2 = await inject(tid, DISMISS_FN); return reply({ clicked: [...r1.clicked, ...r2.clicked], removed: r1.removed + r2.removed }); }
+      case "find_links": return reply({ links: await inject(tid, FINDLINKS_FN, p.keywords || []) });
       case "reload_extension": { setTimeout(() => chrome.runtime.reload(), 200); return reply({ reloading: true }); }
       default: return reply(null, "unknown method: " + msg.method);
     }
