@@ -18,6 +18,12 @@ async def test_resolve_known_ref(ctl):
     assert await loc.count() == 1
 
 
+async def test_snapshot_marks_offscreen_elements(ctl):
+    # browser-use-style viewport awareness: the fixture's bottom div sits 1500px down
+    out = await ctl.snapshot(interactive_only=False)
+    assert "(below)" in out
+
+
 async def test_stale_ref_raises(ctl):
     await ctl.snapshot()
     with pytest.raises(RoamError) as ei:

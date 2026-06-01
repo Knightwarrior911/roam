@@ -46,8 +46,10 @@ function SNAPSHOT_FN(interactiveOnly) {
   const isI = el => INTER.has(el.tagName) || ['button','link','textbox','checkbox','radio','tab','menuitem'].includes(el.getAttribute('role')) || el.hasAttribute('onclick') || el.tabIndex >= 0;
   const role = el => el.getAttribute('role') || ({A:'link',BUTTON:'button',SELECT:'combobox',TEXTAREA:'textbox',INPUT:(el.type==='submit'||el.type==='button')?'button':'textbox'}[el.tagName] || el.tagName.toLowerCase());
   const name = el => (el.getAttribute('aria-label')||el.getAttribute('placeholder')||el.getAttribute('alt')||(el.value&&el.type!=='password'?el.value:'')||(el.innerText||el.textContent||'').trim()).replace(/\s+/g,' ').slice(0,120);
+  const vh = window.innerHeight || 0;
+  const viewOf = (el) => { const r = el.getBoundingClientRect(); return r.bottom < 0 ? ' (above)' : (r.top > vh ? ' (below)' : ''); };
   const out = []; let n = 0;
-  (function walk(el){ for (const c of el.children){ const vis = c.offsetParent !== null || c.tagName==='OPTION'; if (vis && (!interactiveOnly || isI(c))){ n++; const r='e'+n; c.setAttribute('data-roam-ref',r); out.push('- '+role(c)+(name(c)?' "'+name(c)+'"':'')+' [ref='+r+']'); } walk(c);} })(document.body);
+  (function walk(el){ for (const c of el.children){ const vis = c.offsetParent !== null || c.tagName==='OPTION'; if (vis && (!interactiveOnly || isI(c))){ n++; const r='e'+n; c.setAttribute('data-roam-ref',r); out.push('- '+role(c)+(name(c)?' "'+name(c)+'"':'')+viewOf(c)+' [ref='+r+']'); } walk(c);} })(document.body);
   return out.join('\n') || '(no elements)';
 }
 async function inject(tabId, fn, ...args) {

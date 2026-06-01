@@ -30,6 +30,13 @@ SNAPSHOT_JS = r"""
     el.getAttribute('alt') || (el.value && el.type !== 'password' ? el.value : '') ||
     (el.innerText || el.textContent || '').trim()
   ).replace(/\s+/g, ' ').slice(0, 120);
+  const vh = window.innerHeight || 0;
+  const viewOf = (el) => {
+    const r = el.getBoundingClientRect();
+    if (r.bottom < 0) return 'above';
+    if (r.top > vh) return 'below';
+    return 'in';
+  };
   const out = [];
   let n = 0;
   const walk = (el) => {
@@ -39,7 +46,7 @@ SNAPSHOT_JS = r"""
         n += 1;
         const ref = 'e' + n;
         child.setAttribute('data-roam-ref', ref);
-        out.push({ ref, role: roleOf(child), name: nameOf(child) });
+        out.push({ ref, role: roleOf(child), name: nameOf(child), view: viewOf(child) });
       }
       walk(child);
     }
@@ -54,5 +61,6 @@ def build_outline(nodes):
     lines = []
     for node in nodes:
         nm = f' "{node["name"]}"' if node.get("name") else ""
-        lines.append(f'- {node["role"]}{nm} [ref={node["ref"]}]')
+        mark = "" if node.get("view", "in") == "in" else f' ({node["view"]})'
+        lines.append(f'- {node["role"]}{nm}{mark} [ref={node["ref"]}]')
     return "\n".join(lines) if lines else "(no elements found)"
