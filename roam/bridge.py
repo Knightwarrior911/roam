@@ -30,7 +30,9 @@ class Bridge:
     async def start(self):
         if websockets is None:
             raise BridgeError("pip install websockets to use bridge mode")
-        self._server = await websockets.serve(self._handler, "127.0.0.1", self.port)
+        # raise max message size: full-page screenshots (base64 PNG) exceed the 1 MiB default
+        self._server = await websockets.serve(self._handler, "127.0.0.1", self.port,
+                                              max_size=64 * 1024 * 1024)
         return self
 
     async def stop(self):
