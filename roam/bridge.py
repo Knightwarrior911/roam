@@ -95,51 +95,91 @@ class Bridge:
 
 class BridgeBrowser:
     """Drives the user's real, logged-in browser through the Roam Bridge extension.
-    Mirrors BrowserController's core surface so the MCP tools work unchanged."""
+    Mirrors BrowserController's surface so the MCP tools work unchanged. Every method
+    takes an optional `tab` (a real browser tab id) so Roam can drive many tabs at once;
+    omit it to use the active tab. Concurrent calls on different tabs run in parallel."""
 
     def __init__(self, bridge: Bridge):
         self.bridge = bridge
 
-    async def open(self, url=None):
-        return await self.goto(url) if url else await self.bridge.call("status")
+    @staticmethod
+    def _t(params, tab):
+        if tab is not None:
+            params["tabId"] = tab
+        return params
 
-    async def goto(self, url, wait="load"):
-        return await self.bridge.call("navigate", {"url": url})
+    async def open(self, url=None, tab=None):
+        return await self.goto(url, tab=tab) if url else await self.bridge.call("status", self._t({}, tab))
 
-    async def back(self):
-        return await self.bridge.call("back")
+    async def goto(self, url, wait="load", tab=None):
+        return await self.bridge.call("navigate", self._t({"url": url}, tab), timeout=60)
 
-    async def forward(self):
-        return await self.bridge.call("forward")
+    async def back(self, tab=None):
+        return await self.bridge.call("back", self._t({}, tab))
 
-    async def reload(self):
-        return await self.bridge.call("reload")
+    async def forward(self, tab=None):
+        return await self.bridge.call("forward", self._t({}, tab))
 
-    async def snapshot(self, interactive_only=True, selector=None):
-        r = await self.bridge.call("snapshot", {"interactive_only": interactive_only})
+    async def reload(self, tab=None):
+        return await self.bridge.call("reload", self._t({}, tab), timeout=60)
+
+    async def snapshot(self, interactive_only=True, selector=None, tab=None):
+        r = await self.bridge.call("snapshot", self._t({"interactive_only": interactive_only}, tab))
         return r["outline"]
 
     async def click(self, element=None, ref=None, selector=None, x=None, y=None,
-                    button="left", count=1):
-        return await self.bridge.call("click", {"ref": ref, "selector": selector})
+                    button="left", count=1, tab=None):
+        return await self.bridge.call("click", self._t({"ref": ref, "selector": selector}, tab))
 
-    async def type_text(self, element=None, ref=None, selector=None, text="", submit=False):
-        return await self.bridge.call("type", {"ref": ref, "selector": selector,
-                                               "text": text, "submit": submit})
+    async def type_text(self, element=None, ref=None, selector=None, text="", submit=False, tab=None):
+        return await self.bridge.call("type", self._t({"ref": ref, "selector": selector,
+                                                       "text": text, "submit": submit}, tab))
 
-    async def read(self, selector=None, ref=None):
-        return (await self.bridge.call("text", {"selector": selector}))["text"]
+    async def select(self, element=None, ref=None, selector=None, values=None, tab=None):
+        return await self.bridge.call("select", self._t({"ref": ref, "selector": selector,
+                                                         "values": values or []}, tab))
 
-    async def eval_js(self, js):
-        return (await self.bridge.call("eval", {"js": js}))["value"]
+    async def hover(self, element=None, ref=None, selector=None, tab=None):
+        return await self.bridge.call("hover", self._t({"ref": ref, "selector": selector}, tab))
 
-    async def screenshot(self, full=False, selector=None):
+    async def press(self, key, tab=None):
+        return await self.bridge.call("press", self._t({"key": key}, tab))
+
+    async def scroll(self, direction=None, ref=None, tab=None):
+        return await self.bridge.call("scroll", self._t({"direction": direction, "ref": ref}, tab))
+
+    async def read(self, selector=None, ref=None, tab=None):
+        return (await self.bridge.call("text", self._t({"selector": selector}, tab)))["text"]
+
+    async def eval_js(self, js, tab=None):
+        return (await self.bridge.call("eval", self._t({"js": js}, tab)))["value"]
+
+    async def wait(self, for_, value=None, timeout=None, tab=None):
+        return await self.bridge.call("wait", self._t({"for": for_, "value": value,
+                                                       "timeout": timeout}, tab), timeout=(timeout or 15000) / 1000 + 10)
+
+    async def cdp(self, method, params=None, tab=None):
+        return (await self.bridge.call("cdp", self._t({"cdpMethod": method, "cdpParams": params or {}}, tab)))["result"]
+
+    async def screenshot(self, full=False, selector=None, tab=None):
         import base64
-        data_url = (await self.bridge.call("screenshot"))["dataUrl"]
+        data_url = (await self.bridge.call("screenshot", self._t({"full": full}, tab), timeout=45))["dataUrl"]
         return base64.b64decode(data_url.split(",", 1)[1])
+
+    async def console(self, level=None, tail=50, tab=None):
+        return ["(console capture not available over the bridge; use eval to read state)"]
 
     async def tabs(self):
         return (await self.bridge.call("tabs"))["tabs"]
+
+    async def new_tab(self, url=None):
+        return await self.bridge.call("open_tab", {"url": url})
+
+    async def switch_tab(self, tab_id):
+        return await self.bridge.call("switch_tab", {"tabId": tab_id})
+
+    async def close_tab(self, tab_id):
+        return await self.bridge.call("close_tab", {"tabId": tab_id})
 
     async def close(self):
         pass   # the bridge drives the user's own browser; never close it

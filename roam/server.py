@@ -35,50 +35,51 @@ def tool(coro):
 
 # ---- underscore impls (unit-testable) ----
 @tool
-async def _open(url: str | None = None): return await _ctl().open(url)
+async def _open(url: str | None = None, tab: int | None = None): return await _ctl().open(url, tab=tab)
 @tool
-async def _goto(url: str, wait: str = "load"): return await _ctl().goto(url, wait)
+async def _goto(url: str, wait: str = "load", tab: int | None = None): return await _ctl().goto(url, wait, tab=tab)
 @tool
-async def _back(): return await _ctl().back()
+async def _back(tab: int | None = None): return await _ctl().back(tab=tab)
 @tool
-async def _forward(): return await _ctl().forward()
+async def _forward(tab: int | None = None): return await _ctl().forward(tab=tab)
 @tool
-async def _reload(): return await _ctl().reload()
+async def _reload(tab: int | None = None): return await _ctl().reload(tab=tab)
 @tool
-async def _snapshot(interactive_only: bool = True, selector: str | None = None):
-    return await _ctl().snapshot(interactive_only, selector)
+async def _snapshot(interactive_only: bool = True, selector: str | None = None, tab: int | None = None):
+    return await _ctl().snapshot(interactive_only, selector, tab=tab)
 @tool
 async def _click(element: str = "", ref: str | None = None, selector: str | None = None,
                  x: float | None = None, y: float | None = None,
-                 button: str = "left", count: int = 1):
-    return await _ctl().click(element, ref, selector, x, y, button, count)
+                 button: str = "left", count: int = 1, tab: int | None = None):
+    return await _ctl().click(element, ref, selector, x, y, button, count, tab=tab)
 @tool
 async def _type(element: str = "", ref: str | None = None, selector: str | None = None,
-                text: str = "", submit: bool = False):
-    return await _ctl().type_text(element, ref, selector, text, submit)
+                text: str = "", submit: bool = False, tab: int | None = None):
+    return await _ctl().type_text(element, ref, selector, text, submit, tab=tab)
 @tool
-async def _press(key: str): return await _ctl().press(key)
+async def _press(key: str, tab: int | None = None): return await _ctl().press(key, tab=tab)
 @tool
 async def _select(element: str = "", ref: str | None = None, selector: str | None = None,
-                  values: list | None = None):
-    return await _ctl().select(element, ref, selector, values)
+                  values: list | None = None, tab: int | None = None):
+    return await _ctl().select(element, ref, selector, values, tab=tab)
 @tool
-async def _hover(element: str = "", ref: str | None = None, selector: str | None = None):
-    return await _ctl().hover(element, ref, selector)
+async def _hover(element: str = "", ref: str | None = None, selector: str | None = None,
+                 tab: int | None = None):
+    return await _ctl().hover(element, ref, selector, tab=tab)
 @tool
-async def _scroll(direction: str | None = None, ref: str | None = None):
-    return await _ctl().scroll(direction, ref)
+async def _scroll(direction: str | None = None, ref: str | None = None, tab: int | None = None):
+    return await _ctl().scroll(direction, ref, tab=tab)
 @tool
-async def _read(selector: str | None = None, ref: str | None = None):
-    return await _ctl().read(selector, ref)
+async def _read(selector: str | None = None, ref: str | None = None, tab: int | None = None):
+    return await _ctl().read(selector, ref, tab=tab)
 @tool
-async def _eval(js: str): return await _ctl().eval_js(js)
+async def _eval(js: str, tab: int | None = None): return await _ctl().eval_js(js, tab=tab)
 @tool
-async def _console(level: str | None = None, tail: int = 50):
-    return await _ctl().console(level, tail)
+async def _console(level: str | None = None, tail: int = 50, tab: int | None = None):
+    return await _ctl().console(level, tail, tab=tab)
 @tool
-async def _wait(for_: str, value: str | None = None, timeout: int | None = None):
-    return await _ctl().wait(for_, value, timeout)
+async def _wait(for_: str, value: str | None = None, timeout: int | None = None, tab: int | None = None):
+    return await _ctl().wait(for_, value, timeout, tab=tab)
 @tool
 async def _tabs(): return await _ctl().tabs()
 @tool
@@ -88,8 +89,8 @@ async def _switch_tab(id: str): return await _ctl().switch_tab(id)
 @tool
 async def _close_tab(id: str): return await _ctl().close_tab(id)
 @tool
-async def _cdp(method: str, params: dict | None = None):
-    return await _ctl().cdp(method, params)
+async def _cdp(method: str, params: dict | None = None, tab: int | None = None):
+    return await _ctl().cdp(method, params, tab=tab)
 @tool
 async def _recall(url: str | None = None): return await _ctl().recall(url)
 @tool
@@ -125,9 +126,9 @@ async def _bridge_status():
 
 
 # ---- screenshot is special: returns an inline image to the agent ----
-async def _screenshot_impl(full: bool = False, selector: str | None = None):
+async def _screenshot_impl(full: bool = False, selector: str | None = None, tab: int | None = None):
     try:
-        data = await _ctl().screenshot(full, selector)
+        data = await _ctl().screenshot(full, selector, tab=tab)
         return Image(data=data, format="png")
     except RoamError as e:
         return err(e)

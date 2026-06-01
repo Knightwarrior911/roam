@@ -157,24 +157,28 @@ class BrowserController:
         if self._ctx is None:
             await self._launch()
 
-    async def current_page(self):
+    async def current_page(self, tab=None):
         if self._ctx is None or not self.pages:
             raise RoamError("NO_BROWSER", "no page open", "call open first")
+        if tab is not None:
+            if tab not in self.pages:
+                raise RoamError("TAB_NOT_FOUND", f"no tab {tab}", "call tabs to list ids")
+            return self.pages[tab]
         return self.pages[self.active]
 
-    async def page(self):
+    async def page(self, tab=None):
         await self.ensure()
-        return await self.current_page()
+        return await self.current_page(tab)
 
     # ---- navigation ----
-    async def open(self, url=None):
+    async def open(self, url=None, tab=None):
         await self.ensure()
         if url:
-            await self.goto(url)
-        return {"tab": self.active, "url": (await self.current_page()).url}
+            await self.goto(url, tab=tab)
+        return {"tab": self.active, "url": (await self.current_page(tab)).url}
 
-    async def goto(self, url, wait="load"):
-        page = await self.page()
+    async def goto(self, url, wait="load", tab=None):
+        page = await self.page(tab)
         if self.bypass_on and self._bypass is not None:
             await self._apply_bypass(page, url)
         states = {"load": "load", "domcontentloaded": "domcontentloaded", "none": "commit"}
@@ -186,18 +190,18 @@ class BrowserController:
             await self._run_cleanup(page)   # strip overlays / unblur / reveal article
         return {"url": page.url, "title": await page.title()}
 
-    async def back(self):
-        page = await self.current_page()
+    async def back(self, tab=None):
+        page = await self.current_page(tab)
         await page.go_back()
         return {"url": page.url}
 
-    async def forward(self):
-        page = await self.current_page()
+    async def forward(self, tab=None):
+        page = await self.current_page(tab)
         await page.go_forward()
         return {"url": page.url}
 
-    async def reload(self):
-        page = await self.current_page()
+    async def reload(self, tab=None):
+        page = await self.current_page(tab)
         await page.reload()
         return {"url": page.url, "title": await page.title()}
 
@@ -264,25 +268,27 @@ class BrowserController:
                 await page.wait_for_timeout(700)
 
     # ---- observation: snapshot ----
-    async def snapshot(self, interactive_only=True, selector=None):
-        page = await self.page()
+    async def snapshot(self, interactive_only=True, selector=None, tab=None):
+        page = await self.page(tab)
         nodes = await page.evaluate(
             SNAPSHOT_JS, {"interactiveOnly": interactive_only, "rootSelector": selector}
         )
         self._refs = {n["ref"] for n in nodes}
         return build_outline(nodes)
 
-    async def _resolve(self, ref):
-        if ref not in self._refs:
+    async def _resolve(self, ref, tab=None):
+        # resolve against the target tab's DOM (per-tab correct for concurrent multi-tab)
+        page = await self.current_page(tab)
+        loc = page.locator(f'[data-roam-ref="{ref}"]')
+        if await loc.count() == 0:
             raise RoamError("REF_STALE", f"ref {ref} not in current snapshot", "re-run snapshot")
-        page = await self.current_page()
-        return page.locator(f'[data-roam-ref="{ref}"]')
+        return loc
 
-    async def _target(self, ref=None, selector=None):
+    async def _target(self, ref=None, selector=None, tab=None):
         if ref is not None:
-            return await self._resolve(ref)
+            return await self._resolve(ref, tab)
         if selector is not None:
-            page = await self.current_page()
+            page = await self.current_page(tab)
             loc = page.locator(selector)
             if await loc.count() == 0:
                 raise RoamError("SELECTOR_NOT_FOUND", f"no element for {selector}",
@@ -322,20 +328,20 @@ class BrowserController:
 
     # ---- interaction ----
     async def click(self, element=None, ref=None, selector=None, x=None, y=None,
-                    button="left", count=1):
-        page = await self.current_page()
+                    button="left", count=1, tab=None):
+        page = await self.current_page(tab)
         if x is not None and y is not None:
             await page.mouse.click(float(x), float(y), button=button, click_count=count)
             return {"clicked": [x, y]}
-        loc = await self._target(ref, selector)
+        loc = await self._target(ref, selector, tab)
         if loc is None:
             raise RoamError("BAD_ARGS", "click needs ref, selector, or x/y", "")
         await loc.click(button=button, click_count=count)
         await self._remember(loc)
         return {"clicked": element or ref or selector}
 
-    async def type_text(self, element=None, ref=None, selector=None, text="", submit=False):
-        loc = await self._target(ref, selector)
+    async def type_text(self, element=None, ref=None, selector=None, text="", submit=False, tab=None):
+        loc = await self._target(ref, selector, tab)
         if loc is None:
             raise RoamError("BAD_ARGS", "type needs ref or selector", "")
         await loc.fill(text)
@@ -344,30 +350,30 @@ class BrowserController:
         await self._remember(loc)
         return {"typed": text, "submitted": submit}
 
-    async def press(self, key):
-        page = await self.current_page()
+    async def press(self, key, tab=None):
+        page = await self.current_page(tab)
         await page.keyboard.press(key)
         return {"pressed": key}
 
-    async def select(self, element=None, ref=None, selector=None, values=None):
-        loc = await self._target(ref, selector)
+    async def select(self, element=None, ref=None, selector=None, values=None, tab=None):
+        loc = await self._target(ref, selector, tab)
         if loc is None:
             raise RoamError("BAD_ARGS", "select needs ref or selector", "")
         chosen = await loc.select_option(values or [])
         await self._remember(loc)
         return {"selected": chosen}
 
-    async def hover(self, element=None, ref=None, selector=None):
-        loc = await self._target(ref, selector)
+    async def hover(self, element=None, ref=None, selector=None, tab=None):
+        loc = await self._target(ref, selector, tab)
         if loc is None:
             raise RoamError("BAD_ARGS", "hover needs ref or selector", "")
         await loc.hover()
         return {"hovered": element or ref or selector}
 
-    async def scroll(self, direction=None, ref=None):
-        page = await self.current_page()
+    async def scroll(self, direction=None, ref=None, tab=None):
+        page = await self.current_page(tab)
         if ref is not None:
-            loc = await self._resolve(ref)
+            loc = await self._resolve(ref, tab)
             await loc.scroll_into_view_if_needed()
             return {"scrolled": "into_view", "ref": ref}
         js = {
@@ -389,11 +395,11 @@ class BrowserController:
             return f"() => {{ {body} }}"
         return f"() => ({body})"
 
-    async def read(self, selector=None, ref=None):
+    async def read(self, selector=None, ref=None, tab=None):
         if ref is not None:
-            loc = await self._resolve(ref)
+            loc = await self._resolve(ref, tab)
             return await loc.inner_text()
-        page = await self.current_page()
+        page = await self.current_page(tab)
         target = selector or "body"
         loc = page.locator(target)
         if await loc.count() == 0:
@@ -401,15 +407,15 @@ class BrowserController:
                             "snapshot to find the right element")
         return await loc.first.inner_text()
 
-    async def eval_js(self, js):
-        page = await self.current_page()
+    async def eval_js(self, js, tab=None):
+        page = await self.current_page(tab)
         try:
             return await page.evaluate(self._wrap_js(js))
         except Exception as e:
             raise RoamError("EVAL_ERROR", str(e), "")
 
-    async def screenshot(self, full=False, selector=None):
-        page = await self.current_page()
+    async def screenshot(self, full=False, selector=None, tab=None):
+        page = await self.current_page(tab)
         if selector:
             loc = page.locator(selector)
             if await loc.count() == 0:
@@ -417,7 +423,7 @@ class BrowserController:
             return await loc.first.screenshot(type="png")
         return await page.screenshot(full_page=full, type="png")
 
-    async def console(self, level=None, tail=50):
+    async def console(self, level=None, tail=50, tab=None):
         items = list(self.console_buf)
         if level:
             items = [(t, m) for (t, m) in items if t == level]
@@ -460,8 +466,8 @@ class BrowserController:
         return {"closed": tab_id}
 
     # ---- wait ----
-    async def wait(self, for_, value=None, timeout=None):
-        page = await self.current_page()
+    async def wait(self, for_, value=None, timeout=None, tab=None):
+        page = await self.current_page(tab)
         ms = timeout or self.cfg.default_timeout_ms
         try:
             if for_ in ("load", "domcontentloaded", "networkidle"):
@@ -478,8 +484,8 @@ class BrowserController:
         return {"waited": for_, "value": value}
 
     # ---- raw CDP escape hatch ----
-    async def cdp(self, method, params=None):
-        page = await self.current_page()
+    async def cdp(self, method, params=None, tab=None):
+        page = await self.current_page(tab)
         session = await self._ctx.new_cdp_session(page)
         try:
             return await session.send(method, params or {})
