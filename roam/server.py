@@ -6,9 +6,14 @@ from .errors import RoamError, ok, err
 
 mcp = FastMCP("roam")
 _controller = None
+_bridge_srv = None       # bridge.Bridge (WS server) when bridge mode is on
+_bridge_browser = None   # bridge.BridgeBrowser, used while the extension is connected
 
 
 def _ctl():
+    # when the browser extension is connected, drive the user's real browser
+    if _bridge_browser is not None and _bridge_srv is not None and _bridge_srv.connected.is_set():
+        return _bridge_browser
     global _controller
     if _controller is None:
         _controller = BrowserController(load_config())
@@ -95,6 +100,28 @@ async def _bypass(enable: bool = True, rules_dir: str | None = None):
 @tool
 async def _import_cookies(domain: str, source: str = "edge"):
     return await _ctl().import_cookies(domain, source)
+@tool
+async def _bridge(enable: bool = True, port: int = 8777):
+    global _bridge_srv, _bridge_browser
+    from .bridge import Bridge, BridgeBrowser
+    if enable:
+        if _bridge_srv is None:
+            _bridge_srv = Bridge(port)
+            await _bridge_srv.start()
+            _bridge_browser = BridgeBrowser(_bridge_srv)
+        return {"bridge": "listening", "port": port,
+                "connected": _bridge_srv.connected.is_set(),
+                "hint": "load the Roam Bridge extension in your browser; tools then drive it"}
+    if _bridge_srv is not None:
+        await _bridge_srv.stop()
+        _bridge_srv = None
+        _bridge_browser = None
+    return {"bridge": "stopped"}
+@tool
+async def _bridge_status():
+    return {"listening": _bridge_srv is not None,
+            "connected": bool(_bridge_srv and _bridge_srv.connected.is_set()),
+            "browser": (_bridge_srv.hello if _bridge_srv else None)}
 
 
 # ---- screenshot is special: returns an inline image to the agent ----
@@ -114,7 +141,7 @@ _REGISTRY = {
     "console": _console, "wait": _wait, "tabs": _tabs, "new_tab": _new_tab,
     "switch_tab": _switch_tab, "close_tab": _close_tab, "cdp": _cdp,
     "recall": _recall, "forget": _forget, "bypass": _bypass,
-    "import_cookies": _import_cookies,
+    "import_cookies": _import_cookies, "bridge": _bridge, "bridge_status": _bridge_status,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 

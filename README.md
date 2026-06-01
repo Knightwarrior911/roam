@@ -109,6 +109,15 @@ are skipped. For a `v20` site, log into it directly inside Roam's browser instea
 that aggressively bot-protected sites (e.g. Bloomberg's "Are you a robot?") may flag an
 automated browser regardless of cookies; pair with stealth mode and a real in-Roam login.
 
+## Drive your real browser (bridge)
+
+For sites that hard-gate anonymous visitors or detect automation (Bloomberg, etc.), Roam can
+drive **the browser you already use** (Comet / Chrome / Edge) over a local WebSocket bridge,
+inheriting your sessions + extensions (e.g. Bypass Paywalls Clean) and your real, non-automated
+fingerprint. Install the `extension/` once (`chrome://extensions` -> Developer mode -> Load
+unpacked), then call the `bridge` tool; the extension auto-connects (with reconnect + heartbeat)
+and every browser tool drives your active real tab. Full guide: [BRIDGE_SETUP.md](BRIDGE_SETUP.md).
+
 ## Stealth mode
 
 `mode: "stealth"` swaps the backend to [patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright)

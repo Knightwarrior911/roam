@@ -104,6 +104,10 @@ async function handleCommand(msg) {
       case "click": return reply({ ok: await inject(tab.id, (ref, sel) => { const el = ref ? document.querySelector('[data-roam-ref="'+ref+'"]') : document.querySelector(sel); if (!el) return false; el.click(); return true; }, p.ref || null, p.selector || null) });
       case "type": return reply({ ok: await inject(tab.id, (ref, sel, text, submit) => { const el = ref ? document.querySelector('[data-roam-ref="'+ref+'"]') : document.querySelector(sel); if (!el) return false; el.focus(); el.value = text; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); if (submit) el.form && el.form.requestSubmit && el.form.requestSubmit(); return true; }, p.ref || null, p.selector || null, p.text || "", !!p.submit) });
       case "screenshot": { const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }); return reply({ dataUrl }); }
+      case "back": { await chrome.tabs.goBack(tab.id); return reply({ ok: true }); }
+      case "forward": { await chrome.tabs.goForward(tab.id); return reply({ ok: true }); }
+      case "reload": { await chrome.tabs.reload(tab.id); await waitComplete(tab.id); return reply({ ok: true }); }
+      case "tabs": { const ts = await chrome.tabs.query({}); return reply({ tabs: ts.map(t => ({ id: t.id, title: t.title, url: t.url, active: t.active })) }); }
       default: return reply(null, "unknown method: " + msg.method);
     }
   } catch (e) {

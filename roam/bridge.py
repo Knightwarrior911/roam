@@ -89,3 +89,69 @@ class Bridge:
         if msg.get("error"):
             raise BridgeError(msg["error"])
         return msg.get("result")
+
+
+class BridgeBrowser:
+    """Drives the user's real, logged-in browser through the Roam Bridge extension.
+    Mirrors BrowserController's core surface so the MCP tools work unchanged."""
+
+    def __init__(self, bridge: Bridge):
+        self.bridge = bridge
+
+    async def open(self, url=None):
+        return await self.goto(url) if url else await self.bridge.call("status")
+
+    async def goto(self, url, wait="load"):
+        return await self.bridge.call("navigate", {"url": url})
+
+    async def back(self):
+        return await self.bridge.call("back")
+
+    async def forward(self):
+        return await self.bridge.call("forward")
+
+    async def reload(self):
+        return await self.bridge.call("reload")
+
+    async def snapshot(self, interactive_only=True, selector=None):
+        r = await self.bridge.call("snapshot", {"interactive_only": interactive_only})
+        return r["outline"]
+
+    async def click(self, element=None, ref=None, selector=None, x=None, y=None,
+                    button="left", count=1):
+        return await self.bridge.call("click", {"ref": ref, "selector": selector})
+
+    async def type_text(self, element=None, ref=None, selector=None, text="", submit=False):
+        return await self.bridge.call("type", {"ref": ref, "selector": selector,
+                                               "text": text, "submit": submit})
+
+    async def read(self, selector=None, ref=None):
+        return (await self.bridge.call("text", {"selector": selector}))["text"]
+
+    async def eval_js(self, js):
+        return (await self.bridge.call("eval", {"js": js}))["value"]
+
+    async def screenshot(self, full=False, selector=None):
+        import base64
+        data_url = (await self.bridge.call("screenshot"))["dataUrl"]
+        return base64.b64decode(data_url.split(",", 1)[1])
+
+    async def tabs(self):
+        return (await self.bridge.call("tabs"))["tabs"]
+
+    async def close(self):
+        pass   # the bridge drives the user's own browser; never close it
+
+
+async def _serve_forever(port=8777):
+    br = await Bridge(port).start()
+    print(f"Roam bridge listening on ws://127.0.0.1:{port} "
+          f"— load the Roam Bridge extension in your browser to connect.")
+    await asyncio.Future()   # run until killed
+
+
+if __name__ == "__main__":
+    import sys
+    _port = int(sys.argv[1]) if len(sys.argv) > 1 else 8777
+    asyncio.run(_serve_forever(_port))
+
