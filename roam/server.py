@@ -92,6 +92,9 @@ async def _forget(domain: str): return await _ctl().forget(domain)
 @tool
 async def _bypass(enable: bool = True, rules_dir: str | None = None):
     return _ctl().set_bypass(enable, rules_dir)
+@tool
+async def _import_cookies(domain: str, source: str = "edge"):
+    return await _ctl().import_cookies(domain, source)
 
 
 # ---- screenshot is special: returns an inline image to the agent ----
@@ -111,6 +114,7 @@ _REGISTRY = {
     "console": _console, "wait": _wait, "tabs": _tabs, "new_tab": _new_tab,
     "switch_tab": _switch_tab, "close_tab": _close_tab, "cdp": _cdp,
     "recall": _recall, "forget": _forget, "bypass": _bypass,
+    "import_cookies": _import_cookies,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 

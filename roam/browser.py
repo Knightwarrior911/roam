@@ -310,6 +310,16 @@ class BrowserController:
     async def forget(self, domain):
         return {"forgotten": self.memory.forget(domain)}
 
+    async def import_cookies(self, domain, source="edge"):
+        """Load a site's session cookies from a local browser (edge/chrome) so Roam
+        browses as the logged-in you. Stays on this machine."""
+        from .cookies_import import read_cookies
+        await self.ensure()
+        cookies = read_cookies(source, domain)
+        if cookies:
+            await self._ctx.add_cookies(cookies)
+        return {"imported": len(cookies), "domain": domain, "source": source}
+
     # ---- interaction ----
     async def click(self, element=None, ref=None, selector=None, x=None, y=None,
                     button="left", count=1):

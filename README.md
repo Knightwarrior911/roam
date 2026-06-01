@@ -96,6 +96,19 @@ metered resets). Toggle at runtime with the `bypass` tool. Honest limit: BPC's b
 per-site article reconstruction (`ld_json`/`cs_code` DOMPurify rebuilds for a minority of
 sites) is approximated by the generic reveal, not ported verbatim.
 
+## Use your logged-in session (import cookies)
+
+`import_cookies(domain, source)` loads a site's session cookies from a local Chromium
+browser (`edge` / `chrome`) into Roam's profile, so Roam browses as the logged-in you, for
+sites that hard-gate anonymous visitors. Everything stays on this machine: the cookie key
+is unwrapped with Windows DPAPI (same user) and values are AES-GCM decrypted.
+
+**Limit:** this handles the `v10`/`v11` cookie scheme. Chrome/Edge 127+ added **app-bound
+encryption (`v20`)** for some cookies, which deliberately resists external decryption; those
+are skipped. For a `v20` site, log into it directly inside Roam's browser instead. Note too
+that aggressively bot-protected sites (e.g. Bloomberg's "Are you a robot?") may flag an
+automated browser regardless of cookies; pair with stealth mode and a real in-Roam login.
+
 ## Stealth mode
 
 `mode: "stealth"` swaps the backend to [patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright)
