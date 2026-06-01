@@ -1,0 +1,14 @@
+# Roam
+__pycache__/
+*.pyc
+.venv/
+venv/
+# dedicated Chrome profile (logins live here — never commit)
+profile/
+*.profile/
+# local config (no secrets, but machine-specific)
+config.json
+# scratch / test artifacts
+_*.png
+*.png
+test-results/
