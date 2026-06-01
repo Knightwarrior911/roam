@@ -8,6 +8,11 @@ profile/
 *.profile/
 # local config (no secrets, but machine-specific)
 config.json
+# local selector-memory DB (private browsing memory — never commit)
+memory.db
+*.db
+# stray lock files
+*.conf.lock
 # scratch / test artifacts
 _*.png
 *.png
