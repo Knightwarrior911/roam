@@ -50,6 +50,17 @@ async def test_solve_cloudflare_clean_page_envelope():
     assert r["ok"] is True and r["data"]["solved"] is True
 
 
+def test_recipe_tools_in_registry():
+    assert "record_api" in srv.TOOL_NAMES and "recipes" in srv.TOOL_NAMES
+
+
+async def test_record_api_tool_envelope():
+    await srv._open(url=FIXTURE)
+    r = await srv._record_api(enable=True)
+    assert r["ok"] is True and r["data"]["recording"] is True
+    await srv._record_api(enable=False)
+
+
 def test_browsermcp_parity_present():
     names = set(srv.TOOL_NAMES)
     parity = {"goto", "snapshot", "click", "hover", "type", "select", "press",

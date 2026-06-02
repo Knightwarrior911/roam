@@ -201,6 +201,13 @@ class BridgeBrowser:
                 "note": "bridge uses your real browser — it passes Cloudflare natively; "
                         "if a challenge persists, click it once by hand"}
 
+    async def record_api(self, enable=True, tab=None):
+        # Bridge-side network capture (debugger Network domain in the extension) is the next
+        # increment; today, capture API recipes by visiting the site in the managed browser.
+        return {"recording": False,
+                "note": "API-recipe capture currently runs on the managed browser; "
+                        "bridge-side capture via the extension is a planned increment"}
+
     async def relocate(self, fingerprint, tab=None):
         return await self.bridge.call("relocate", self._t({"fp": fingerprint}, tab))
 

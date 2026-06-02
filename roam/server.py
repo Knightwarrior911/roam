@@ -162,6 +162,15 @@ async def _stealth_audit(tab: int | None = None):
 async def _solve_cloudflare(max_attempts: int = 3, tab: int | None = None):
     return await _ctl().solve_cloudflare(max_attempts=max_attempts, tab=tab)
 @tool
+async def _record_api(enable: bool = True, tab: int | None = None):
+    return await _ctl().record_api(enable, tab=tab)
+@tool
+async def _recipes(url: str | None = None, query: str | None = None):
+    from urllib.parse import urlparse
+    url = await _current_url(url)
+    domain = urlparse(url).netloc if url else None
+    return {"recipes": _memory().get_recipes(domain=domain, query=query)}
+@tool
 async def _heal(role: str, name: str, tab: int | None = None):
     url = await _current_url()
     fp = _memory().fingerprint_for(url=url, role=role, name=name)
@@ -224,6 +233,7 @@ _REGISTRY = {
     "stealth_audit": _stealth_audit, "read_markdown": _read_markdown, "heal": _heal,
     "dismiss_popups": _dismiss_popups, "find_links": _find_links, "web_search": _web_search,
     "controlled": _controlled, "solve_cloudflare": _solve_cloudflare,
+    "record_api": _record_api, "recipes": _recipes,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 

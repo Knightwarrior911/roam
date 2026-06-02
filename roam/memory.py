@@ -11,6 +11,28 @@ def _key(url):
     return u.netloc, (u.path or "/")
 
 
+def _tokens(s):
+    return re.findall(r"\w+", (s or "").lower())
+
+
+def _tok_match(a, b):
+    # exact, or a stem/prefix relationship (search~searching, product~products)
+    if a == b:
+        return True
+    return len(a) >= 4 and len(b) >= 4 and (a.startswith(b) or b.startswith(a))
+
+
+def rank_score(query_tokens, text):
+    """Fraction of query tokens that match (stem/prefix-aware) some token in `text`.
+    Dependency-free improved-lexical ranking — not true embeddings, but handles plural/
+    stem variants that exact substring matching misses."""
+    ttok = _tokens(text)
+    if not query_tokens or not ttok:
+        return 0.0
+    hits = sum(1 for q in query_tokens if any(_tok_match(q, t) for t in ttok))
+    return hits / len(query_tokens)
+
+
 # Computes a durable CSS selector + role + accessible name for an element.
 # Runs as a Playwright Locator.evaluate (the element is the implicit arg).
 REMEMBER_JS = r"""
@@ -64,6 +86,14 @@ class SelectorMemory:
             c.execute(
                 """CREATE TABLE IF NOT EXISTS manuals(
                     domain TEXT, name TEXT, steps TEXT,
+                    hits INTEGER DEFAULT 1, last_ts INTEGER,
+                    PRIMARY KEY(domain, name))"""
+            )
+            # API recipes: the internal API calls a site makes, captured from real browsing
+            # (actionbook's real moat). Claude turns these into direct-fetch shortcuts.
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS recipes(
+                    domain TEXT, name TEXT, method TEXT, api_url TEXT, resp_keys TEXT,
                     hits INTEGER DEFAULT 1, last_ts INTEGER,
                     PRIMARY KEY(domain, name))"""
             )
@@ -124,12 +154,11 @@ class SelectorMemory:
                 rows = c.execute("SELECT * FROM selectors ORDER BY hits DESC").fetchall()
         out = [dict(r) for r in rows]
         if query:
-            # rank by intent: token overlap of the query with each element's name+role
-            qtok = set(re.findall(r"\w+", query.lower()))
+            # rank by intent (stem/prefix-aware), tie-break on hits; never return empty
+            qtok = _tokens(query)
 
             def score(r):
-                txt = ((r.get("name") or "") + " " + (r.get("role") or "")).lower()
-                return len(qtok & set(re.findall(r"\w+", txt)))
+                return rank_score(qtok, (r.get("name") or "") + " " + (r.get("role") or ""))
 
             ranked = sorted(out, key=lambda r: (score(r), r.get("hits", 0)), reverse=True)
             return [r for r in ranked if score(r) > 0] or ranked
@@ -179,6 +208,52 @@ class SelectorMemory:
                 return c.execute("DELETE FROM manuals WHERE domain=? AND name=?",
                                  (domain, name)).rowcount
             return c.execute("DELETE FROM manuals WHERE domain=?", (domain,)).rowcount
+
+    # ---- API recipes: internal API calls captured per site ----
+    def record_recipe(self, url, name, method, api_url, resp_keys=None, ts=None):
+        domain = _key(url)[0] if "://" in (url or "") else (url or "")
+        ts = ts if ts is not None else int(time.time())
+        keys = json.dumps(resp_keys or [])
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO recipes(domain, name, method, api_url, resp_keys, hits, last_ts)
+                   VALUES(?,?,?,?,?,1,?)
+                   ON CONFLICT(domain, name) DO UPDATE SET
+                     hits = hits + 1, method = excluded.method, api_url = excluded.api_url,
+                     resp_keys = excluded.resp_keys, last_ts = excluded.last_ts""",
+                (domain, name, method, api_url, keys, ts))
+
+    def get_recipes(self, url=None, domain=None, query=None):
+        if url and "://" in url:
+            domain = _key(url)[0]
+        with self._conn() as c:
+            if domain:
+                rows = c.execute("SELECT * FROM recipes WHERE domain=? ORDER BY hits DESC",
+                                 (domain,)).fetchall()
+            else:
+                rows = c.execute("SELECT * FROM recipes ORDER BY hits DESC").fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["resp_keys"] = json.loads(d["resp_keys"]) if d.get("resp_keys") else []
+            out.append(d)
+        if query:
+            qtok = _tokens(query)
+
+            def score(r):
+                txt = f'{r.get("name","")} {r.get("api_url","")} {" ".join(r.get("resp_keys") or [])}'
+                return rank_score(qtok, txt)
+
+            ranked = sorted(out, key=lambda r: (score(r), r.get("hits", 0)), reverse=True)
+            return [r for r in ranked if score(r) > 0] or ranked
+        return out
+
+    def forget_recipe(self, domain, name=None):
+        with self._conn() as c:
+            if name is not None:
+                return c.execute("DELETE FROM recipes WHERE domain=? AND name=?",
+                                 (domain, name)).rowcount
+            return c.execute("DELETE FROM recipes WHERE domain=?", (domain,)).rowcount
 
 
 def format_manual(rows):

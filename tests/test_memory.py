@@ -87,6 +87,53 @@ def test_recall_by_query_ranks_by_intent(tmp_path):
     assert m.recall(domain="x.com", query="zzz") != []
 
 
+# ---- improved (stem/prefix-aware) recall ranking ----
+def test_recall_matches_word_stems(tmp_path):
+    m = _mem(tmp_path)
+    m.record("https://x.com/", "button", "Submit", "#submit", ts=1)
+    m.record("https://x.com/", "textbox", "Product search", "#search", ts=1)
+    # "searching products" shares no exact token, but stems match search~searching, product~products
+    r = m.recall(domain="x.com", query="searching products")
+    assert r[0]["selector"] == "#search"
+
+
+# ---- API recipes (actionbook-style moat material captured from real browsing) ----
+def test_record_and_get_recipe(tmp_path):
+    m = _mem(tmp_path)
+    m.record_recipe("https://youtube.com/results", "search", "POST",
+                    "/youtubei/v1/search", resp_keys=["contents"], ts=1)
+    rs = m.get_recipes(domain="youtube.com")
+    assert len(rs) == 1
+    assert rs[0]["method"] == "POST" and rs[0]["api_url"] == "/youtubei/v1/search"
+    assert rs[0]["resp_keys"] == ["contents"] and rs[0]["domain"] == "youtube.com"
+
+
+def test_recipe_dedup_increments_hits(tmp_path):
+    m = _mem(tmp_path)
+    m.record_recipe("https://x.com/", "r", "GET", "/api/a", resp_keys=["a"], ts=1)
+    m.record_recipe("https://x.com/", "r", "GET", "/api/a", resp_keys=["a", "b"], ts=2)
+    rs = m.get_recipes(domain="x.com")
+    assert len(rs) == 1 and rs[0]["hits"] == 2 and rs[0]["resp_keys"] == ["a", "b"]
+
+
+def test_get_recipes_semantic_query(tmp_path):
+    m = _mem(tmp_path)
+    m.record_recipe("https://x.com/", "search", "POST", "/api/search", resp_keys=["results"], ts=1)
+    m.record_recipe("https://x.com/", "profile", "GET", "/api/user/profile", resp_keys=["name"], ts=1)
+    r = m.get_recipes(domain="x.com", query="find search results")
+    assert r and "search" in r[0]["api_url"]
+
+
+def test_forget_recipe(tmp_path):
+    m = _mem(tmp_path)
+    m.record_recipe("https://x.com/", "a", "GET", "/a", ts=1)
+    m.record_recipe("https://x.com/", "b", "GET", "/b", ts=1)
+    assert m.forget_recipe("x.com", "a") == 1
+    assert len(m.get_recipes(domain="x.com")) == 1
+    assert m.forget_recipe("x.com") == 1
+    assert m.get_recipes(domain="x.com") == []
+
+
 def test_forget_manual(tmp_path):
     m = _mem(tmp_path)
     m.save_manual("https://x.com/", "a", [{}], ts=1)

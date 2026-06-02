@@ -33,6 +33,7 @@ class BrowserController:
         self._bypass_rule = None # last applied rule (for post-nav cleanup)
         self._cursor = (0.0, 0.0)  # last virtual mouse position (humanize mode)
         self._uach_applied = set()  # page ids that already got the UA-CH override
+        self._api_handler = None    # context "response" listener while recording API recipes
 
     # ---- launch seam (the ONLY thing the two modes differ on) ----
     def _profile_dir(self):
@@ -347,6 +348,48 @@ class BrowserController:
     async def stealth_audit(self, tab=None):
         page = await self.current_page(tab)
         return audit_verdict(await page.evaluate(AUDIT_JS))
+
+    # ---- API-recipe capture (the moat: learn a site's internal API from real browsing) ----
+    async def record_api(self, enable=True, tab=None):
+        await self.ensure()
+        if enable:
+            if self._api_handler is None:
+                self._api_handler = lambda resp: asyncio.create_task(self._capture_api(resp))
+                self._ctx.on("response", self._api_handler)
+            return {"recording": True}
+        if self._api_handler is not None:
+            try:
+                self._ctx.remove_listener("response", self._api_handler)
+            except Exception:
+                pass
+            self._api_handler = None
+        return {"recording": False}
+
+    async def _capture_api(self, resp):
+        # record JSON XHR/fetch endpoints + their top-level response shape, keyed by the
+        # page's site. Best-effort; never disturbs the page (Playwright already buffered it).
+        try:
+            req = resp.request
+            if req.resource_type not in ("xhr", "fetch"):
+                return
+            if "json" not in (resp.headers or {}).get("content-type", "").lower():
+                return
+            from urllib.parse import urlparse
+            path = urlparse(resp.url).path
+            name = f"{req.method} {path}"
+            keys = []
+            try:
+                data = await resp.json()
+                if isinstance(data, dict):
+                    keys = list(data.keys())[:20]
+                elif isinstance(data, list) and data and isinstance(data[0], dict):
+                    keys = list(data[0].keys())[:20]
+            except Exception:
+                pass
+            page_url = (req.frame.url if req.frame else resp.url) or resp.url
+            self.memory.record_recipe(page_url, name, req.method, path, resp_keys=keys)
+        except Exception:
+            pass
 
     async def solve_cloudflare(self, max_attempts=3, tab=None):
         from .cloudflare import solve
