@@ -26,6 +26,102 @@ STEALTH_ARGS = [
     "--disable-features=IsolateOrigins,site-per-process",
 ]
 
+def grease_brands(version, grease_version="99"):
+    """Build a correctly-GREASE'd Sec-CH-UA brand list (matches Chromium's own algorithm:
+    deterministic permutation from the major version + the fake 'Not A Brand' entry). A
+    hand-rolled brand list with the wrong order/grease is itself a detection signal."""
+    seed = int(str(version).split(".")[0])
+    order = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]][seed % 6]
+    esc = [" ", " ", ";"]
+    greasey = f"{esc[order[0]]}Not{esc[order[1]]}A{esc[order[2]]}Brand"
+    out = [None, None, None]
+    out[order[0]] = {"brand": greasey, "version": grease_version}
+    out[order[1]] = {"brand": "Chromium", "version": str(version)}
+    out[order[2]] = {"brand": "Google Chrome", "version": str(version)}
+    return out
+
+
+def should_apply_uach(cfg):
+    """Only fix UA-CH on bundled Chromium under hardening. Real Chrome channel and
+    patchright already emit a consistent UA-CH (and patchright explicitly should NOT have a
+    custom UA), so we must not touch those — overriding them would CREATE a mismatch."""
+    if cfg.mode == "stealth" or cfg.executable_path:
+        return False
+    if (cfg.channel or "").lower() in ("chrome", "msedge", "msedge-beta", "msedge-dev", "chrome-beta"):
+        return False
+    return bool(cfg.stealth_harden)
+
+
+_UACH_READ_JS = r"""
+async () => {
+  const ua = navigator.userAgent;
+  let h = {};
+  try {
+    if (navigator.userAgentData)
+      h = await navigator.userAgentData.getHighEntropyValues(
+        ['platform','platformVersion','architecture','model','uaFullVersion','bitness']);
+  } catch (e) {}
+  return { ua, h };
+}
+"""
+
+
+async def apply_uach(page):
+    """Best-effort: fix the UA-CH brand list (and de-headless the UA) via CDP, REUSING the
+    browser's own high-entropy hints so everything stays internally consistent. Returns a
+    small status dict; never raises (stealth is best-effort)."""
+    import re
+    try:
+        info = await page.evaluate(_UACH_READ_JS)
+        ua = (info.get("ua") or "").replace("HeadlessChrome", "Chrome").replace("Headless", "")
+        m = re.search(r"Chrome/(\d+)", ua)
+        if not m:
+            return {"applied": False, "reason": "not a Chrome UA"}
+        major = m.group(1)
+        h = info.get("h") or {}
+        full = h.get("uaFullVersion") or f"{major}.0.0.0"
+        uach_platform = h.get("platform") or "Windows"
+        nav_platform = {"Windows": "Win32", "macOS": "MacIntel", "Mac OS X": "MacIntel",
+                        "Linux": "Linux x86_64", "Android": "Linux armv8l"}.get(uach_platform, "Win32")
+        client = await page.context.new_cdp_session(page)
+        await client.send("Network.setUserAgentOverride", {
+            "userAgent": ua,
+            "platform": nav_platform,
+            "userAgentMetadata": {
+                "brands": grease_brands(major),
+                "fullVersionList": grease_brands(full, "99.0.0.0"),
+                "fullVersion": full,
+                "platform": uach_platform,
+                "platformVersion": h.get("platformVersion") or "",
+                "architecture": h.get("architecture") or "x86",
+                "model": h.get("model") or "",
+                "bitness": h.get("bitness") or "64",
+                "mobile": False,
+            },
+        })
+        return {"applied": True, "brand_count": 3, "major": major}
+    except Exception as e:
+        return {"applied": False, "reason": str(e)}
+
+
+def build_stealth_args(cfg):
+    """Launch args for hardened/stealth launches. STEALTH_ARGS is the always-on safe base;
+    the rest are GATED by explicit config (off by default) because they change the
+    fingerprint or behavior and shouldn't fire for ordinary logged-in browsing.
+
+    canvas_noise uses Chromium's NATIVE per-session canvas noise flag — not a JS hook. This
+    is deliberate: JS canvas hooks are themselves detectable (toString + per-call variance);
+    the native flag adds consistent, undetectable noise (the CloakBrowser/Scrapling approach).
+    """
+    args = list(STEALTH_ARGS)
+    if getattr(cfg, "canvas_noise", False):
+        args.append("--fingerprinting-canvas-image-data-noise")
+    if getattr(cfg, "block_webrtc", False):
+        args += ["--webrtc-ip-handling-policy=disable_non_proxied_udp",
+                 "--force-webrtc-ip-handling-policy"]
+    return args
+
+
 STEALTH_JS = r"""
 (() => {
   try {

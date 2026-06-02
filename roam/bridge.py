@@ -194,6 +194,13 @@ class BridgeBrowser:
         from .stealth import audit_verdict
         return audit_verdict(await self.bridge.call("audit", self._t({}, tab)))
 
+    async def solve_cloudflare(self, max_attempts=3, tab=None):
+        # the bridge drives a real browser, which clears Cloudflare natively; there's no
+        # automated cursor to coordinate-click with here. Be honest rather than pretend.
+        return {"solved": None, "attempts": 0, "type": None,
+                "note": "bridge uses your real browser — it passes Cloudflare natively; "
+                        "if a challenge persists, click it once by hand"}
+
     async def relocate(self, fingerprint, tab=None):
         return await self.bridge.call("relocate", self._t({"fp": fingerprint}, tab))
 

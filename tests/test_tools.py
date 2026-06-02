@@ -40,6 +40,16 @@ def test_controlled_in_registry():
     assert "controlled" in srv.TOOL_NAMES
 
 
+def test_solve_cloudflare_in_registry():
+    assert "solve_cloudflare" in srv.TOOL_NAMES
+
+
+async def test_solve_cloudflare_clean_page_envelope():
+    await srv._open(url=FIXTURE)
+    r = await srv._solve_cloudflare(max_attempts=1)
+    assert r["ok"] is True and r["data"]["solved"] is True
+
+
 def test_browsermcp_parity_present():
     names = set(srv.TOOL_NAMES)
     parity = {"goto", "snapshot", "click", "hover", "type", "select", "press",

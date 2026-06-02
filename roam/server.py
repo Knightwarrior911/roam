@@ -159,6 +159,9 @@ async def _controlled(on: bool = True, label: str = "Roam controlling", tab: int
 async def _stealth_audit(tab: int | None = None):
     return await _ctl().stealth_audit(tab=tab)
 @tool
+async def _solve_cloudflare(max_attempts: int = 3, tab: int | None = None):
+    return await _ctl().solve_cloudflare(max_attempts=max_attempts, tab=tab)
+@tool
 async def _heal(role: str, name: str, tab: int | None = None):
     url = await _current_url()
     fp = _memory().fingerprint_for(url=url, role=role, name=name)
@@ -220,7 +223,7 @@ _REGISTRY = {
     "save_manual": _save_manual, "recall_manual": _recall_manual, "forget_manual": _forget_manual,
     "stealth_audit": _stealth_audit, "read_markdown": _read_markdown, "heal": _heal,
     "dismiss_popups": _dismiss_popups, "find_links": _find_links, "web_search": _web_search,
-    "controlled": _controlled,
+    "controlled": _controlled, "solve_cloudflare": _solve_cloudflare,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 

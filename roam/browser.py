@@ -8,7 +8,7 @@ from .errors import RoamError
 from .snapshot import SNAPSHOT_JS, build_outline
 from .memory import SelectorMemory, REMEMBER_JS, format_manual
 from .bypass import PaywallBypass, CLEANUP_JS
-from .stealth import STEALTH_JS, STEALTH_ARGS, AUDIT_JS, audit_verdict
+from .stealth import STEALTH_JS, build_stealth_args, AUDIT_JS, audit_verdict, should_apply_uach, apply_uach
 from .heal import FINGERPRINT_EL_JS, RELOCATE_JS
 
 
@@ -32,6 +32,7 @@ class BrowserController:
         self._routed = set()     # page ids with a bypass route installed
         self._bypass_rule = None # last applied rule (for post-nav cleanup)
         self._cursor = (0.0, 0.0)  # last virtual mouse position (humanize mode)
+        self._uach_applied = set()  # page ids that already got the UA-CH override
 
     # ---- launch seam (the ONLY thing the two modes differ on) ----
     def _profile_dir(self):
@@ -80,7 +81,7 @@ class BrowserController:
         kwargs = dict(user_data_dir=self._profile_dir(), headless=self.cfg.headless,
                       viewport=self.cfg.viewport)
         if self.cfg.stealth_harden or self.cfg.mode == "stealth":
-            kwargs["args"] = STEALTH_ARGS
+            kwargs["args"] = build_stealth_args(self.cfg)
         # executable_path (a stealth Chromium binary) and channel are mutually exclusive
         if self.cfg.executable_path:
             kwargs["executable_path"] = self.cfg.executable_path
@@ -187,6 +188,10 @@ class BrowserController:
 
     async def goto(self, url, wait="load", tab=None):
         page = await self.page(tab)
+        if should_apply_uach(self.cfg) and id(page) not in self._uach_applied:
+            # fix the bundled-chromium UA-CH brand leak before the navigation request goes out
+            self._uach_applied.add(id(page))
+            await apply_uach(page)
         if self.bypass_on and self._bypass is not None:
             await self._apply_bypass(page, url)
         states = {"load": "load", "domcontentloaded": "domcontentloaded", "none": "commit"}
@@ -342,6 +347,16 @@ class BrowserController:
     async def stealth_audit(self, tab=None):
         page = await self.current_page(tab)
         return audit_verdict(await page.evaluate(AUDIT_JS))
+
+    async def solve_cloudflare(self, max_attempts=3, tab=None):
+        from .cloudflare import solve
+        page = await self.current_page(tab)
+        click_fn = None
+        if self.cfg.humanize:
+            from .humanize import human_click
+            async def click_fn(x, y):
+                self._cursor = await human_click(page, x, y, start=self._cursor)
+        return await solve(page, click_fn=click_fn, max_attempts=max_attempts)
 
     async def import_cookies(self, domain, source="edge"):
         """Load a site's session cookies from a local browser (edge/chrome) so Roam

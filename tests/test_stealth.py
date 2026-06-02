@@ -83,6 +83,63 @@ async def test_hardening_does_not_use_detectable_webdriver_override(tmp_path):
         await c.close()
 
 
+def test_grease_brands_has_chrome_chromium_notabrand():
+    from roam.stealth import grease_brands
+    b = grease_brands("120")
+    brands = {x["brand"] for x in b}
+    assert "Google Chrome" in brands and "Chromium" in brands
+    assert any("Not" in x and "Brand" in x for x in brands)
+    assert len(b) == 3
+    assert all(x["version"] == "120" for x in b if x["brand"] in ("Google Chrome", "Chromium"))
+
+
+def test_grease_brands_deterministic():
+    from roam.stealth import grease_brands
+    assert grease_brands("120") == grease_brands("120")
+
+
+def test_should_apply_uach_only_on_bundled_chromium_harden():
+    from roam.stealth import should_apply_uach
+    assert should_apply_uach(Config(channel=None, stealth_harden=True)) is True
+    assert should_apply_uach(Config(channel="chrome", stealth_harden=True)) is False   # real chrome ok
+    assert should_apply_uach(Config(channel=None, mode="stealth", stealth_harden=True)) is False  # patchright
+    assert should_apply_uach(Config(channel=None, stealth_harden=False)) is False
+
+
+async def test_uach_override_adds_google_chrome_brand(tmp_path):
+    # on bundled chromium the brand list lacks "Google Chrome"; after the override it's present
+    cfg = Config(headless=True, channel=None, stealth_harden=True, profile_dir=str(tmp_path / "p"))
+    c = BrowserController(cfg)
+    try:
+        await c.open(FIXTURE)
+        page = await c.current_page()
+        brands = await page.evaluate(
+            "() => (navigator.userAgentData ? navigator.userAgentData.brands.map(b=>b.brand) : [])")
+        # userAgentData may be absent in some bundled builds; only assert when present
+        if brands:
+            assert "Google Chrome" in brands
+    finally:
+        await c.close()
+
+
+def test_build_stealth_args_base_has_automation_flag():
+    from roam.stealth import build_stealth_args
+    a = build_stealth_args(Config())
+    assert "--disable-blink-features=AutomationControlled" in a
+
+
+def test_build_stealth_args_canvas_noise_is_gated():
+    from roam.stealth import build_stealth_args
+    assert "--fingerprinting-canvas-image-data-noise" not in build_stealth_args(Config())
+    assert "--fingerprinting-canvas-image-data-noise" in build_stealth_args(Config(canvas_noise=True))
+
+
+def test_build_stealth_args_webrtc_is_gated():
+    from roam.stealth import build_stealth_args
+    assert not any("webrtc" in x for x in build_stealth_args(Config()))
+    assert any("webrtc-ip-handling" in x for x in build_stealth_args(Config(block_webrtc=True)))
+
+
 async def test_stealth_backend_drives_full_surface(tmp_path):
     # the patchright backend must drive the entire tool surface unchanged
     cfg = Config(headless=True, channel=None, mode="stealth",
