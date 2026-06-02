@@ -164,6 +164,8 @@ def test_build_stealth_args_webrtc_is_gated():
 
 
 async def test_stealth_backend_drives_full_surface(tmp_path):
+    import pytest
+    pytest.importorskip("patchright")   # stealth backend is an optional extra
     # the patchright backend must drive the entire tool surface unchanged
     cfg = Config(headless=True, channel=None, mode="stealth",
                  profile_dir=str(tmp_path / "profile"))
