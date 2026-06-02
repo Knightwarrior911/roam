@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Roam Bridge",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Connects Roam to this browser so an AI agent can drive your real, logged-in tabs.",
-  "permissions": ["debugger", "tabs", "scripting", "activeTab", "offscreen", "alarms"],
+  "permissions": ["debugger", "tabs", "tabGroups", "scripting", "activeTab", "offscreen", "alarms"],
   "host_permissions": ["<all_urls>"],
-  "background": { "service_worker": "background.js" }
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "Roam Bridge" }
 }

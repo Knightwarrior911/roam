@@ -6,8 +6,9 @@ Roam is a Python + Playwright MCP server. It opens a dedicated Chrome with its o
 profile (so your logins persist), and exposes a clean set of tools for an agent to browse
 and act: snapshot the page, click, type, read, screenshot, run JS, manage tabs.
 
-Independent of actionbook and browsermcp. No background daemon, no extension, no cloud,
-no API key. One process that lives as long as your session.
+Independent of actionbook and browsermcp. No background daemon, no cloud, no API key. One
+process that lives as long as your session. (Optional: a small bridge extension lets it
+drive your real, logged-in browser instead — see below.)
 
 ## Install (let your AI agent do it)
 
@@ -39,11 +40,22 @@ Browsing: `open · goto · back · forward · reload · snapshot · click · hov
 press · scroll · read · eval · screenshot · console · wait · cdp` — plus concurrent
 multi-tab (`tabs · new_tab · switch_tab · close_tab`, every tool takes a `tab` id).
 
-Research + robustness: `read_markdown` (LLM-ready markdown), `find_links` (by intent),
-`web_search` (operator-aware), `dismiss_popups` (cookie/consent/modals), `stealth_audit`
-(measure detectability), `heal` (self-healing selectors), `recall`/`save_manual` (selector
-memory + action manuals), `bypass` (paywall), `import_cookies`, `bridge` (drive your real
-browser).
+Research + extraction: `read_markdown` (LLM-ready markdown), `extract` (schema/selector →
+structured JSON, incl. repeating rows), `pdf` (save page as PDF), `download` / `upload`,
+`find_links` (by intent), `web_search` (operator-aware), `cookies` (inspect/clear),
+`dismiss_popups` (cookie/consent/modals).
+
+Stealth + robustness: `stealth_audit` (fingerprint + CDP-leak verdicts), `solve_cloudflare`
+(bounded Turnstile clicker), `heal` (self-healing selectors). Optional `humanize` config adds
+Bézier mouse + keystroke cadence + eased scroll; `canvas_noise` / `block_webrtc` are gated
+launch flags.
+
+Memory / the moat: `recall`/`save_manual` (selector memory + action manuals), `record_api` +
+`recipes` (capture a site's internal API calls from real browsing → reusable shortcuts),
+`bypass` (paywall), `import_cookies`.
+
+Controlled-tab UX: `controlled` toggles a visual cue (native tab group + in-page border/badge)
+so you can see which tab the agent is driving; `bridge` drives your real browser.
 
 Elements come from `snapshot` as stable `[ref=eN]` handles (with `(above)`/`(below)` viewport
 markers); `click`/`type` also take screen coordinates as a vision fallback. A **`roam-research`
@@ -53,25 +65,32 @@ research (filings, IR pages, market research).
 ## Setup
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 python -m playwright install chrome
 ```
 
 ## Connect to Claude Code
 
+After `pip install -e .` the `roam` command is on your PATH, so registration is clean —
+no `PYTHONPATH`, no `cwd`:
+
+```bash
+claude mcp add roam -s user -- roam
+```
+
+Equivalent JSON for other clients:
+
+```json
+{ "mcpServers": { "roam": { "command": "roam" } } }
+```
+
+<details><summary>No install? (run from the repo without <code>pip install</code>)</summary>
+
 ```bash
 claude mcp add roam -s user -e PYTHONPATH=C:\Users\vinit\roam -- python -m roam
 ```
-
-`PYTHONPATH` points Python at the package (Claude Code's MCP config has no `cwd`
-field). Equivalent JSON for other clients:
-
-```json
-{ "mcpServers": { "roam": { "command": "python", "args": ["-m", "roam"],
-    "env": { "PYTHONPATH": "C:\\Users\\vinit\\roam" } } } }
-```
-
-(Or `pip install -e .` the repo so `python -m roam` works with no `PYTHONPATH`.)
+`PYTHONPATH` points Python at the package (Claude Code's MCP config has no `cwd` field).
+</details>
 
 The first browser tool opens Roam's Chrome. Log into a site once there; the login
 persists in `%LOCALAPPDATA%\Roam\profile`. Your everyday Chrome is never touched.
@@ -81,8 +100,13 @@ persists in `%LOCALAPPDATA%\Roam\profile`. Your everyday Chrome is never touched
 `%LOCALAPPDATA%\Roam\config.json`:
 ```json
 { "headless": false, "channel": "chrome", "default_timeout_ms": 15000,
-  "viewport": {"width": 1280, "height": 800} }
+  "viewport": {"width": 1280, "height": 800},
+  "stealth_harden": false, "humanize": false,
+  "canvas_noise": false, "block_webrtc": false }
 ```
+`stealth_harden` injects the (non-detectable) fingerprint hardening + UA-CH fix; `humanize`
+adds human-like mouse/keystroke/scroll (slower); `canvas_noise`/`block_webrtc` are gated
+launch flags. All off by default.
 
 ## Memory (recall what you've used)
 
@@ -161,6 +185,14 @@ entire tool surface is identical across modes.
 
 ## Status
 
-v1 + v2: logged-in browser control, local selector memory, stealth-mode backend, native
-paywall bypass, attached-CDP launch mode. Roadmap: cookies/storage + network tools,
-semantic recall over the memory.
+v1 + v2 + v3: logged-in browser control, multi-tab, local selector memory + self-healing,
+stealth-mode backend, native paywall bypass, the bridge (drive your real browser), 46 tools.
+v3 adds: controlled-tab visual cue (tab group + in-page badge), expanded `stealth_audit`
+(fingerprint + CDP-leak verdicts) with the detectable webdriver/UA-CH tells fixed, behavioral
+humanization, a bounded Cloudflare Turnstile solver, API-recipe capture (`record_api`/
+`recipes`), and research extraction (`extract`/`pdf`/`download`/`upload`). CI runs the test
+suite (120 tests) on every push.
+
+Planned next: bridge-side API capture + cookie access (via the extension's debugger/cookies
+APIs), real-input fidelity over the bridge (`chrome.debugger Input`), offscreen-document
+keepalive, true embedding-based recall.

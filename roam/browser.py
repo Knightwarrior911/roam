@@ -8,7 +8,7 @@ from .errors import RoamError
 from .snapshot import SNAPSHOT_JS, build_outline
 from .memory import SelectorMemory, REMEMBER_JS, format_manual
 from .bypass import PaywallBypass, CLEANUP_JS
-from .stealth import STEALTH_JS, STEALTH_ARGS, AUDIT_JS, audit_verdict
+from .stealth import STEALTH_JS, build_stealth_args, AUDIT_JS, audit_verdict, should_apply_uach, apply_uach
 from .heal import FINGERPRINT_EL_JS, RELOCATE_JS
 
 
@@ -31,6 +31,8 @@ class BrowserController:
         self._bypass = PaywallBypass(cfg.bypass_rules_dir) if cfg.bypass else None
         self._routed = set()     # page ids with a bypass route installed
         self._bypass_rule = None # last applied rule (for post-nav cleanup)
+        self._cursor = (0.0, 0.0)  # last virtual mouse position (humanize mode)
+        self._api_handler = None    # context "response" listener while recording API recipes
 
     # ---- launch seam (the ONLY thing the two modes differ on) ----
     def _profile_dir(self):
@@ -79,7 +81,7 @@ class BrowserController:
         kwargs = dict(user_data_dir=self._profile_dir(), headless=self.cfg.headless,
                       viewport=self.cfg.viewport)
         if self.cfg.stealth_harden or self.cfg.mode == "stealth":
-            kwargs["args"] = STEALTH_ARGS
+            kwargs["args"] = build_stealth_args(self.cfg)
         # executable_path (a stealth Chromium binary) and channel are mutually exclusive
         if self.cfg.executable_path:
             kwargs["executable_path"] = self.cfg.executable_path
@@ -186,6 +188,14 @@ class BrowserController:
 
     async def goto(self, url, wait="load", tab=None):
         page = await self.page(tab)
+        if should_apply_uach(self.cfg) and not getattr(page, "_roam_uach", False):
+            # fix the bundled-chromium UA-CH brand leak before the navigation request goes out
+            # (flag on the page object — avoids id() reuse after GC that a set of ids risks)
+            try:
+                page._roam_uach = True
+            except Exception:
+                pass
+            await apply_uach(page)
         if self.bypass_on and self._bypass is not None:
             await self._apply_bypass(page, url)
         states = {"load": "load", "domcontentloaded": "domcontentloaded", "none": "commit"}
@@ -342,6 +352,58 @@ class BrowserController:
         page = await self.current_page(tab)
         return audit_verdict(await page.evaluate(AUDIT_JS))
 
+    # ---- API-recipe capture (the moat: learn a site's internal API from real browsing) ----
+    async def record_api(self, enable=True, tab=None):
+        await self.ensure()
+        if enable:
+            if self._api_handler is None:
+                self._api_handler = lambda resp: asyncio.create_task(self._capture_api(resp))
+                self._ctx.on("response", self._api_handler)
+            return {"recording": True}
+        if self._api_handler is not None:
+            try:
+                self._ctx.remove_listener("response", self._api_handler)
+            except Exception:
+                pass
+            self._api_handler = None
+        return {"recording": False}
+
+    async def _capture_api(self, resp):
+        # record JSON XHR/fetch endpoints + their top-level response shape, keyed by the
+        # page's site. Best-effort; never disturbs the page (Playwright already buffered it).
+        try:
+            req = resp.request
+            if req.resource_type not in ("xhr", "fetch"):
+                return
+            if "json" not in (resp.headers or {}).get("content-type", "").lower():
+                return
+            from urllib.parse import urlparse
+            path = urlparse(resp.url).path
+            name = f"{req.method} {path}"
+            keys = []
+            try:
+                data = await resp.json()
+                if isinstance(data, dict):
+                    keys = list(data.keys())[:20]
+                elif isinstance(data, list) and data and isinstance(data[0], dict):
+                    keys = list(data[0].keys())[:20]
+            except Exception:
+                pass
+            page_url = (req.frame.url if req.frame else resp.url) or resp.url
+            self.memory.record_recipe(page_url, name, req.method, path, resp_keys=keys)
+        except Exception:
+            pass
+
+    async def solve_cloudflare(self, max_attempts=3, tab=None):
+        from .cloudflare import solve
+        page = await self.current_page(tab)
+        click_fn = None
+        if self.cfg.humanize:
+            from .humanize import human_click
+            async def click_fn(x, y):
+                self._cursor = await human_click(page, x, y, start=self._cursor)
+        return await solve(page, click_fn=click_fn, max_attempts=max_attempts)
+
     async def import_cookies(self, domain, source="edge"):
         """Load a site's session cookies from a local browser (edge/chrome) so Roam
         browses as the logged-in you. Stays on this machine."""
@@ -353,16 +415,37 @@ class BrowserController:
         return {"imported": len(cookies), "domain": domain, "source": source}
 
     # ---- interaction ----
+    async def _human_click_xy(self, page, x, y, button):
+        from .humanize import human_click
+        self._cursor = await human_click(page, x, y, start=self._cursor, button=button)
+
     async def click(self, element=None, ref=None, selector=None, x=None, y=None,
                     button="left", count=1, tab=None):
         page = await self.current_page(tab)
+        human = self.cfg.humanize and count == 1
         if x is not None and y is not None:
-            await page.mouse.click(float(x), float(y), button=button, click_count=count)
+            if human:
+                await self._human_click_xy(page, float(x), float(y), button)
+            else:
+                await page.mouse.click(float(x), float(y), button=button, click_count=count)
             return {"clicked": [x, y]}
         loc = await self._target(ref, selector, tab)
         if loc is None:
             raise RoamError("BAD_ARGS", "click needs ref, selector, or x/y", "")
-        await loc.click(button=button, click_count=count)
+        box = None
+        if human:
+            # native loc.click() auto-scrolls; the humanized path uses viewport coords, so we
+            # must scroll the element into view first or an off-screen click silently misses.
+            try:
+                await loc.scroll_into_view_if_needed()
+            except Exception:
+                pass
+            box = await loc.bounding_box()
+        if box:   # humanized path: move the real cursor to the element center and click
+            await self._human_click_xy(page, box["x"] + box["width"] / 2,
+                                       box["y"] + box["height"] / 2, button)
+        else:
+            await loc.click(button=button, click_count=count)
         await self._remember(loc)
         return {"clicked": element or ref or selector}
 
@@ -370,9 +453,25 @@ class BrowserController:
         loc = await self._target(ref, selector, tab)
         if loc is None:
             raise RoamError("BAD_ARGS", "type needs ref or selector", "")
-        await loc.fill(text)
-        if submit:
-            await loc.press("Enter")
+        if self.cfg.humanize:
+            from .humanize import human_type
+            page = await self.current_page(tab)
+            await loc.fill("")            # clear, then type with human cadence
+            await loc.focus()
+            await human_type(page, text)
+            # guarantee exactness even in edge cases (e.g. maxlength interfering with a
+            # simulated typo+backspace): repair to the intended value if it drifted.
+            try:
+                if await loc.input_value() != text:
+                    await loc.fill(text)
+            except Exception:
+                pass                       # non-value element (contenteditable) — best effort
+            if submit:
+                await loc.press("Enter")
+        else:
+            await loc.fill(text)
+            if submit:
+                await loc.press("Enter")
         await self._remember(loc)
         return {"typed": text, "submitted": submit}
 
@@ -402,6 +501,11 @@ class BrowserController:
             loc = await self._resolve(ref, tab)
             await loc.scroll_into_view_if_needed()
             return {"scrolled": "into_view", "ref": ref}
+        if self.cfg.humanize and direction in ("down", "up"):
+            from .humanize import human_scroll
+            vh = await page.evaluate("() => window.innerHeight") or 800
+            await human_scroll(page, (vh * 0.9) * (1 if direction == "down" else -1))
+            return {"scrolled": direction}
         js = {
             "down": "window.scrollBy(0, window.innerHeight*0.9)",
             "up": "window.scrollBy(0, -window.innerHeight*0.9)",
@@ -413,6 +517,70 @@ class BrowserController:
                             "direction: down|up|top|bottom")
         await page.evaluate(js)
         return {"scrolled": direction}
+
+    async def cookies(self, action="get", domain=None, tab=None):
+        await self.ensure()
+        if action == "clear":
+            await self._ctx.clear_cookies()
+            return {"cleared": True}
+        cks = await self._ctx.cookies()
+        if domain:
+            cks = [c for c in cks if domain in (c.get("domain") or "")]
+        return {"cookies": cks}
+
+    # ---- structured extraction / files ----
+    async def extract(self, fields, item_selector=None, tab=None):
+        from .extract import EXTRACT_JS
+        page = await self.current_page(tab)
+        return await page.evaluate(EXTRACT_JS, {"fields": fields, "item": item_selector})
+
+    def _downloads_dir(self):
+        d = os.path.join(os.path.dirname(self.cfg.profile_dir) or ".", "downloads")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    async def pdf(self, path=None, tab=None):
+        import base64
+        page = await self.current_page(tab)
+        if not path:
+            path = os.path.join(self._downloads_dir(), "page.pdf")
+        # CDP printToPDF works headed AND headless (page.pdf() is headless-only)
+        try:
+            client = await page.context.new_cdp_session(page)
+            res = await client.send("Page.printToPDF", {"printBackground": True})
+            with open(path, "wb") as f:
+                f.write(base64.b64decode(res["data"]))
+        except Exception:
+            await page.pdf(path=path)   # fallback (headless chromium)
+        return {"pdf": path}
+
+    async def download(self, ref=None, selector=None, url=None, path=None, tab=None):
+        page = await self.current_page(tab)
+        async with page.expect_download() as dl_info:
+            if url:
+                # navigating to an attachment URL triggers a download
+                try:
+                    await page.goto(url)
+                except Exception:
+                    pass
+            else:
+                loc = await self._target(ref, selector, tab)
+                if loc is None:
+                    raise RoamError("BAD_ARGS", "download needs ref, selector, or url", "")
+                await loc.click()
+        dl = await dl_info.value
+        dest = path or os.path.join(self._downloads_dir(), dl.suggested_filename or "download")
+        await dl.save_as(dest)
+        return {"downloaded": dest, "suggested": dl.suggested_filename}
+
+    async def upload(self, files, ref=None, selector=None, tab=None):
+        loc = await self._target(ref, selector, tab)
+        if loc is None:
+            raise RoamError("BAD_ARGS", "upload needs ref or selector (a file input)", "")
+        paths = files if isinstance(files, list) else [files]
+        await loc.set_input_files(paths)
+        await self._remember(loc)
+        return {"uploaded": paths}
 
     # ---- observation ----
     def _wrap_js(self, js):
@@ -439,6 +607,16 @@ class BrowserController:
             return await page.evaluate(self._wrap_js(js))
         except Exception as e:
             raise RoamError("EVAL_ERROR", str(e), "")
+
+    async def set_controlled(self, on=True, label="Roam controlling",
+                             color="#6c5ce7", tab=None):
+        # Paint (or clear) the in-page "this tab is being controlled" cue. Lives in a
+        # closed shadow root under <html> + pointer-events:none, so it never pollutes
+        # reads/snapshots or blocks clicks (enforced by tests/test_cue.py).
+        from .cue import CUE_JS
+        page = await self.current_page(tab)
+        res = await page.evaluate(CUE_JS, {"on": bool(on), "label": label, "color": color})
+        return {"controlled": bool(on), "shown": res.get("shown", False)}
 
     async def read_markdown(self, selector=None, tab=None):
         from .markdown import CLEAN_HTML_JS, to_markdown

@@ -56,7 +56,23 @@ tools. Tell the user, verbatim:
 > **log into any site once there and the login persists.** Your everyday browser is never
 > touched.
 
-That's it. You're done.
+That's it for the managed browser. You're done with the required install.
+
+## Step 4 — optional but recommended: drive the user's REAL logged-in browser (bridge)
+
+The bridge lets Roam drive the browser the user already uses (Chrome / Edge / Comet) — with
+their logins, sessions, and extensions, and not flagged as automation — instead of Roam's
+own fresh browser. This is what makes hard, logged-in, or paywalled sites work.
+
+It needs a **one-time ~30-second manual extension load** (browsers block silent installs).
+Walk the user through [BRIDGE_SETUP.md](BRIDGE_SETUP.md): open `chrome://extensions` (or
+`edge://extensions`), turn on Developer mode, **Load unpacked** → this repo's `extension/`
+folder. Then in Claude Code call the `bridge` tool; the extension auto-connects and every
+browser tool drives the user's real active tab. A "Roam" tab group + an in-page badge show
+which tabs are being controlled; the extension popup has a Pause button.
+
+Per-user state is fresh: logins, cookies, and the selector-memory DB live only on this
+machine (all gitignored) — nothing came from the repo.
 
 ---
 
@@ -68,10 +84,12 @@ Run these from the repo root. Use the SAME python for every step.
    - Windows: `py -3 --version` (use `py -3` below) or `python --version`.
    - mac/linux: `python3 --version` (use `python3` below).
 
-2. **Install deps:**
+2. **Install deps (editable install — gives a clean `roam` command):**
    ```bash
-   python -m pip install -r requirements.txt
+   python -m pip install -e .
    ```
+   (Bare `python -m pip install -r requirements.txt` also works but skips the entry point;
+   then you must register with `PYTHONPATH` as in the fallback below.)
 
 3. **Install Chrome for Playwright:**
    ```bash
@@ -82,23 +100,24 @@ Run these from the repo root. Use the SAME python for every step.
 
 4. **Smoke test** — confirm the package imports and tests pass:
    ```bash
-   # from repo root, with PYTHONPATH set to repo root:
    python -c "import roam, roam.server; print('roam imports OK')"
    python -m pytest -q
    ```
 
-5. **Register the MCP** with Claude Code. Use the repo's ABSOLUTE path and the SAME python:
-   - Windows example (repo at `C:\Users\you\roam`):
+5. **Register the MCP** with Claude Code.
+   - If you did `pip install -e .` (step 2), registration is clean — no path needed:
      ```bash
-     claude mcp add roam -s user -e PYTHONPATH=C:\Users\you\roam -- python -m roam
+     claude mcp add roam -s user -- roam
      ```
-   - mac/linux example (repo at `/home/you/roam`):
+   - Fallback (no editable install) — use the repo's ABSOLUTE path and the SAME python:
      ```bash
+     # Windows (repo at C:\Users\you\roam):
+     claude mcp add roam -s user -e PYTHONPATH=C:\Users\you\roam -- python -m roam
+     # mac/linux (repo at /home/you/roam):
      claude mcp add roam -s user -e PYTHONPATH=/home/you/roam -- python3 -m roam
      ```
    Replace the path with the real absolute path of THIS folder (`pwd` / `cd`). If multiple
-   pythons exist, use the python's full path in place of `python` so the right interpreter
-   (the one you installed deps into) launches the server.
+   pythons exist, use the python's full path so the right interpreter launches the server.
 
 ## Troubleshooting
 

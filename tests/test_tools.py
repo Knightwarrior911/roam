@@ -28,6 +28,49 @@ async def test_error_surfaces_as_envelope():
     assert r["ok"] is False and r["error"]["code"] == "TAB_NOT_FOUND"
 
 
+async def test_controlled_tool_envelope():
+    await srv._open(url=FIXTURE)
+    r = await srv._controlled(on=True)
+    assert r["ok"] is True and r["data"]["controlled"] is True
+    r2 = await srv._controlled(on=False)
+    assert r2["ok"] is True and r2["data"]["controlled"] is False
+
+
+def test_controlled_in_registry():
+    assert "controlled" in srv.TOOL_NAMES
+
+
+def test_solve_cloudflare_in_registry():
+    assert "solve_cloudflare" in srv.TOOL_NAMES
+
+
+async def test_solve_cloudflare_clean_page_envelope():
+    await srv._open(url=FIXTURE)
+    r = await srv._solve_cloudflare(max_attempts=1)
+    assert r["ok"] is True and r["data"]["solved"] is True
+
+
+def test_recipe_tools_in_registry():
+    assert "record_api" in srv.TOOL_NAMES and "recipes" in srv.TOOL_NAMES
+
+
+def test_research_tools_in_registry():
+    assert {"extract", "pdf", "download", "upload"} <= set(srv.TOOL_NAMES)
+
+
+async def test_extract_tool_envelope():
+    await srv._open(url=FIXTURE)
+    r = await srv._extract(fields={"title": "#title"})
+    assert r["ok"] is True and r["data"]["title"] == "Roam Test Page"
+
+
+async def test_record_api_tool_envelope():
+    await srv._open(url=FIXTURE)
+    r = await srv._record_api(enable=True)
+    assert r["ok"] is True and r["data"]["recording"] is True
+    await srv._record_api(enable=False)
+
+
 def test_browsermcp_parity_present():
     names = set(srv.TOOL_NAMES)
     parity = {"goto", "snapshot", "click", "hover", "type", "select", "press",

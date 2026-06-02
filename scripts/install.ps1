@@ -31,10 +31,13 @@ if (-not $Py) { Fail "no Python 3.10+ found. Install Python 3.10+ from python.or
 Write-Host "Using Python: $Py"
 
 # --- deps -----------------------------------------------------------------------------
-Write-Host "Installing pip dependencies..."
+Write-Host "Installing Roam (editable) + dependencies..."
 & $Py -m pip install --upgrade pip --quiet
-& $Py -m pip install -r (Join-Path $RepoRoot "requirements.txt") --quiet
-if ($LASTEXITCODE -ne 0) { Fail "pip install failed" }
+# Editable install registers the package in site-packages, so `$Py -m roam` works with NO
+# PYTHONPATH (and installs deps from pyproject). Robust regardless of whether the `roam`
+# console-script lands on PATH.
+& $Py -m pip install -e $RepoRoot --quiet
+if ($LASTEXITCODE -ne 0) { Fail "pip install -e failed" }
 
 Write-Host "Installing Chrome for Playwright (this can take a minute)..."
 & $Py -m playwright install chrome
@@ -45,10 +48,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # --- smoke test -----------------------------------------------------------------------
+# No PYTHONPATH on purpose: the editable install must make roam importable on its own.
 Write-Host "Smoke test (import + tests)..."
-$env:PYTHONPATH = $RepoRoot
 & $Py -c "import roam, roam.server; print('import OK')"
-if ($LASTEXITCODE -ne 0) { Fail "roam package failed to import" }
+if ($LASTEXITCODE -ne 0) { Fail "roam package failed to import (editable install did not register)" }
 & $Py -m pytest -q
 if ($LASTEXITCODE -ne 0) { Write-Host "WARN: some tests failed (install still usable)" -ForegroundColor Yellow }
 
@@ -61,7 +64,7 @@ if ($claude) {
     # own end-of-parameters parsing and never reaches claude (breaks "-m roam"). From a
     # variable it's passed through verbatim, and each $-arg is quoted (handles spaced paths).
     $sep = "--"
-    & claude mcp add roam -s user -e "PYTHONPATH=$RepoRoot" $sep "$Py" -m roam
+    & claude mcp add roam -s user $sep "$Py" -m roam
     if ($LASTEXITCODE -ne 0) { Fail "claude mcp add failed" }
     Write-Host ""
     Write-Host "ROAM INSTALL OK" -ForegroundColor Green
@@ -71,5 +74,5 @@ if ($claude) {
     Write-Host "ROAM INSTALL OK (Python side)" -ForegroundColor Green
     Write-Host "Claude Code CLI ('claude') not found on PATH. Add this to your MCP config:" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "  `"roam`": { `"command`": `"$($Py -replace '\\','\\')`", `"args`": [`"-m`",`"roam`"], `"env`": { `"PYTHONPATH`": `"$($RepoRoot -replace '\\','\\')`" } }"
+    Write-Host "  `"roam`": { `"command`": `"$($Py -replace '\\','\\')`", `"args`": [`"-m`",`"roam`"] }"
 }

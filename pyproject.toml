@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roam"
+dynamic = ["version"]
+description = "Roam — a self-owned browser-control MCP for Claude Code (Playwright + bridge to your real browser)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Knightwarrior911" }]
+dependencies = [
+    "mcp>=1.2.0",
+    "playwright>=1.44.0",
+    "websockets>=12.0",      # bridge server (extension <-> Roam)
+    "markdownify>=0.11",     # read_markdown: clean HTML -> LLM markdown
+]
+
+[project.optional-dependencies]
+stealth = ["patchright>=1.44.0"]   # stealth-mode backend; heavy (patched chromium driver)
+dev = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0"]
+
+[project.scripts]
+roam = "roam.__main__:main"
+
+# After `pip install -e .` the MCP registers cleanly with no PYTHONPATH hack:
+#   claude mcp add roam -s user -- roam
+# or the bridge standalone:
+#   python -m roam.bridge
+
+[tool.setuptools.dynamic]
+version = { attr = "roam.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["roam*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

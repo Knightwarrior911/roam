@@ -153,8 +153,39 @@ async def _recall_manual(name: str | None = None, url: str | None = None):
 async def _forget_manual(domain: str, name: str | None = None):
     return {"forgotten": _memory().forget_manual(domain, name)}
 @tool
+async def _controlled(on: bool = True, label: str = "Roam controlling", tab: int | None = None):
+    return await _ctl().set_controlled(on, label=label, tab=tab)
+@tool
 async def _stealth_audit(tab: int | None = None):
     return await _ctl().stealth_audit(tab=tab)
+@tool
+async def _solve_cloudflare(max_attempts: int = 3, tab: int | None = None):
+    return await _ctl().solve_cloudflare(max_attempts=max_attempts, tab=tab)
+@tool
+async def _extract(fields: dict, item_selector: str | None = None, tab: int | None = None):
+    return await _ctl().extract(fields, item_selector=item_selector, tab=tab)
+@tool
+async def _pdf(path: str | None = None, tab: int | None = None):
+    return await _ctl().pdf(path=path, tab=tab)
+@tool
+async def _download(ref: str | None = None, selector: str | None = None,
+                    url: str | None = None, path: str | None = None, tab: int | None = None):
+    return await _ctl().download(ref=ref, selector=selector, url=url, path=path, tab=tab)
+@tool
+async def _upload(files, ref: str | None = None, selector: str | None = None, tab: int | None = None):
+    return await _ctl().upload(files, ref=ref, selector=selector, tab=tab)
+@tool
+async def _cookies(action: str = "get", domain: str | None = None, tab: int | None = None):
+    return await _ctl().cookies(action, domain=domain, tab=tab)
+@tool
+async def _record_api(enable: bool = True, tab: int | None = None):
+    return await _ctl().record_api(enable, tab=tab)
+@tool
+async def _recipes(url: str | None = None, query: str | None = None):
+    from urllib.parse import urlparse
+    url = await _current_url(url)
+    domain = urlparse(url).netloc if url else None
+    return {"recipes": _memory().get_recipes(domain=domain, query=query)}
 @tool
 async def _heal(role: str, name: str, tab: int | None = None):
     url = await _current_url()
@@ -217,6 +248,10 @@ _REGISTRY = {
     "save_manual": _save_manual, "recall_manual": _recall_manual, "forget_manual": _forget_manual,
     "stealth_audit": _stealth_audit, "read_markdown": _read_markdown, "heal": _heal,
     "dismiss_popups": _dismiss_popups, "find_links": _find_links, "web_search": _web_search,
+    "controlled": _controlled, "solve_cloudflare": _solve_cloudflare,
+    "record_api": _record_api, "recipes": _recipes,
+    "extract": _extract, "pdf": _pdf, "download": _download, "upload": _upload,
+    "cookies": _cookies,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 

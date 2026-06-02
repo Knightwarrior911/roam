@@ -184,9 +184,56 @@ class BridgeBrowser:
     async def url(self):
         return (await self.bridge.call("status"))["url"]
 
+    async def set_controlled(self, on=True, label="Roam controlling", color="#6c5ce7", tab=None):
+        # explicit cue toggle over the bridge (the extension also auto-cues on action)
+        r = await self.bridge.call("cue", self._t({"on": on, "label": label, "color": color}, tab))
+        shown = r.get("shown", bool(on)) if isinstance(r, dict) else bool(on)
+        return {"controlled": bool(on), "shown": shown}
+
     async def stealth_audit(self, tab=None):
         from .stealth import audit_verdict
         return audit_verdict(await self.bridge.call("audit", self._t({}, tab)))
+
+    async def solve_cloudflare(self, max_attempts=3, tab=None):
+        # the bridge drives a real browser, which clears Cloudflare natively; there's no
+        # automated cursor to coordinate-click with here. Be honest rather than pretend.
+        return {"solved": None, "attempts": 0, "type": None,
+                "note": "bridge uses your real browser — it passes Cloudflare natively; "
+                        "if a challenge persists, click it once by hand"}
+
+    async def record_api(self, enable=True, tab=None):
+        # Bridge-side network capture (debugger Network domain in the extension) is the next
+        # increment; today, capture API recipes by visiting the site in the managed browser.
+        return {"recording": False,
+                "note": "API-recipe capture currently runs on the managed browser; "
+                        "bridge-side capture via the extension is a planned increment"}
+
+    async def cookies(self, action="get", domain=None, tab=None):
+        return {"cookies": [],
+                "note": "cookie access over the bridge (chrome.cookies) is a planned "
+                        "increment; use the managed browser to inspect/clear cookies"}
+
+    async def extract(self, fields, item_selector=None, tab=None):
+        r = await self.bridge.call("extract", self._t({"fields": fields, "item": item_selector}, tab))
+        return r.get("data") if isinstance(r, dict) else r
+
+    async def pdf(self, path=None, tab=None):
+        import base64, os
+        data = (await self.bridge.call("pdf", self._t({}, tab), timeout=60))["data"]
+        dest = path or os.path.join(os.getcwd(), "page.pdf")
+        with open(dest, "wb") as f:
+            f.write(base64.b64decode(data))
+        return {"pdf": dest}
+
+    async def download(self, ref=None, selector=None, url=None, path=None, tab=None):
+        return {"downloaded": None,
+                "note": "downloads land in your real browser's Downloads folder; trigger the "
+                        "link normally — bridge-mediated save is a planned increment"}
+
+    async def upload(self, files, ref=None, selector=None, tab=None):
+        return {"uploaded": None,
+                "note": "file-input upload over the bridge needs DOM.setFileInputFiles "
+                        "(planned); use the managed browser for automated uploads"}
 
     async def relocate(self, fingerprint, tab=None):
         return await self.bridge.call("relocate", self._t({"fp": fingerprint}, tab))

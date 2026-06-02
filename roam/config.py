@@ -20,6 +20,9 @@ class Config:
     executable_path: str | None = None  # stealth-Chromium binary (e.g. CloakBrowser); overrides channel
     extensions: list = field(default_factory=list)  # unpacked extension dirs to load (headed only)
     stealth_harden: bool = False      # inject anti-automation evasions into the launched browser
+    humanize: bool = False            # human-like mouse paths / keystroke cadence / scroll (slower)
+    canvas_noise: bool = False        # native Chromium per-session canvas noise (flag, not a JS hook)
+    block_webrtc: bool = False        # disable non-proxied-UDP WebRTC (stops local/public IP leak)
     bypass: bool = False              # native paywall bypass (BPC engine)
     bypass_rules_dir: str | None = None  # path to Bypass Paywalls Clean source (for per-site rules)
     bypass_clear_cookies: bool = True    # clear cookies on known paywalled sites (BPC default; resets meters)
@@ -33,6 +36,7 @@ def load_config() -> Config:
         data = json.loads(f.read_text(encoding="utf-8"))
         for k in ("headless", "channel", "profile_dir", "default_timeout_ms",
                   "viewport", "mode", "executable_path", "extensions", "stealth_harden",
+                  "humanize", "canvas_noise", "block_webrtc",
                   "bypass", "bypass_rules_dir", "bypass_clear_cookies"):
             if k in data:
                 setattr(cfg, k, data[k])
