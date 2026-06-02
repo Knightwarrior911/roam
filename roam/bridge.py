@@ -208,6 +208,11 @@ class BridgeBrowser:
                 "note": "API-recipe capture currently runs on the managed browser; "
                         "bridge-side capture via the extension is a planned increment"}
 
+    async def cookies(self, action="get", domain=None, tab=None):
+        return {"cookies": [],
+                "note": "cookie access over the bridge (chrome.cookies) is a planned "
+                        "increment; use the managed browser to inspect/clear cookies"}
+
     async def extract(self, fields, item_selector=None, tab=None):
         r = await self.bridge.call("extract", self._t({"fields": fields, "item": item_selector}, tab))
         return r.get("data") if isinstance(r, dict) else r

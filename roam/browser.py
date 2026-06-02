@@ -500,6 +500,16 @@ class BrowserController:
         await page.evaluate(js)
         return {"scrolled": direction}
 
+    async def cookies(self, action="get", domain=None, tab=None):
+        await self.ensure()
+        if action == "clear":
+            await self._ctx.clear_cookies()
+            return {"cleared": True}
+        cks = await self._ctx.cookies()
+        if domain:
+            cks = [c for c in cks if domain in (c.get("domain") or "")]
+        return {"cookies": cks}
+
     # ---- structured extraction / files ----
     async def extract(self, fields, item_selector=None, tab=None):
         from .extract import EXTRACT_JS

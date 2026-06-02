@@ -175,6 +175,9 @@ async def _download(ref: str | None = None, selector: str | None = None,
 async def _upload(files, ref: str | None = None, selector: str | None = None, tab: int | None = None):
     return await _ctl().upload(files, ref=ref, selector=selector, tab=tab)
 @tool
+async def _cookies(action: str = "get", domain: str | None = None, tab: int | None = None):
+    return await _ctl().cookies(action, domain=domain, tab=tab)
+@tool
 async def _record_api(enable: bool = True, tab: int | None = None):
     return await _ctl().record_api(enable, tab=tab)
 @tool
@@ -248,6 +251,7 @@ _REGISTRY = {
     "controlled": _controlled, "solve_cloudflare": _solve_cloudflare,
     "record_api": _record_api, "recipes": _recipes,
     "extract": _extract, "pdf": _pdf, "download": _download, "upload": _upload,
+    "cookies": _cookies,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 
