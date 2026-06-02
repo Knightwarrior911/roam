@@ -24,9 +24,10 @@ done
 echo "Using Python: $PY"
 
 # --- deps -----------------------------------------------------------------------------
-echo "Installing pip dependencies..."
+echo "Installing Roam (editable) + dependencies..."
 "$PY" -m pip install --upgrade pip --quiet
-"$PY" -m pip install -r "$REPO_ROOT/requirements.txt" --quiet || fail "pip install failed"
+# Editable install registers the package so `$PY -m roam` works with NO PYTHONPATH.
+"$PY" -m pip install -e "$REPO_ROOT" --quiet || fail "pip install -e failed"
 
 echo "Installing Chrome for Playwright (this can take a minute)..."
 if ! "$PY" -m playwright install chrome; then
@@ -35,16 +36,16 @@ if ! "$PY" -m playwright install chrome; then
 fi
 
 # --- smoke test -----------------------------------------------------------------------
+# No PYTHONPATH on purpose: the editable install must make roam importable on its own.
 echo "Smoke test (import + tests)..."
-export PYTHONPATH="$REPO_ROOT"
-"$PY" -c "import roam, roam.server; print('import OK')" || fail "roam package failed to import"
+"$PY" -c "import roam, roam.server; print('import OK')" || fail "roam package failed to import (editable install did not register)"
 "$PY" -m pytest -q || echo "WARN: some tests failed (install still usable)"
 
 # --- register MCP with Claude Code ----------------------------------------------------
 if command -v claude >/dev/null 2>&1; then
   echo "Registering 'roam' MCP server with Claude Code..."
   claude mcp remove roam -s user >/dev/null 2>&1 || true
-  claude mcp add roam -s user -e "PYTHONPATH=$REPO_ROOT" -- "$PY" -m roam || fail "claude mcp add failed"
+  claude mcp add roam -s user -- "$PY" -m roam || fail "claude mcp add failed"
   echo
   echo "ROAM INSTALL OK"
   echo "Restart Claude Code, then ask it to 'open a browser with Roam'."
@@ -53,5 +54,5 @@ else
   echo "ROAM INSTALL OK (Python side)"
   echo "Claude Code CLI ('claude') not found on PATH. Add this to your MCP config:"
   echo
-  echo "  \"roam\": { \"command\": \"$PY\", \"args\": [\"-m\",\"roam\"], \"env\": { \"PYTHONPATH\": \"$REPO_ROOT\" } }"
+  echo "  \"roam\": { \"command\": \"$PY\", \"args\": [\"-m\",\"roam\"] }"
 fi

@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+# packaging / editable-install artifacts
+*.egg-info/
+build/
+dist/
 # dedicated Chrome profile (logins live here — never commit)
 profile/
 *.profile/

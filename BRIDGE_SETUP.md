@@ -10,11 +10,23 @@ Browsers deliberately block silent extension installs, so the **one-time install
 
 ## One-time install (~30 seconds)
 
-1. Open your browser (Comet) and go to `chrome://extensions`.
-2. Turn on **Developer mode** (toggle, top-right).
+The extension is a standard Chromium MV3 extension, so it loads the same way in
+**Chrome, Edge, and Comet** (all Chromium). Pick your browser's extensions page:
+
+| Browser | Extensions page | Developer-mode toggle |
+|---------|-----------------|-----------------------|
+| Chrome  | `chrome://extensions` | top-right |
+| Comet   | `chrome://extensions` | top-right |
+| Edge    | `edge://extensions`   | bottom-left sidebar |
+
+1. Open the extensions page above for your browser.
+2. Turn on **Developer mode**.
 3. Click **Load unpacked**.
 4. Select the folder: `C:\Users\vinit\roam\extension`
 5. "Roam Bridge" appears in the list. Done — it stays installed.
+
+You can install it in more than one browser; whichever one is running connects to the
+bridge. (Only one browser should be connected at a time — the bridge is newest-connection-wins.)
 
 ## Use it
 

@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install package + dev deps
+        run: pip install -e ".[dev]"
+
+      # Tests drive Playwright's bundled chromium (conftest uses channel=None),
+      # so we only need chromium, not the real Chrome channel.
+      - name: Install Playwright chromium (Linux, with system deps)
+        if: runner.os == 'Linux'
+        run: python -m playwright install --with-deps chromium
+
+      - name: Install Playwright chromium (Windows)
+        if: runner.os == 'Windows'
+        run: python -m playwright install chromium
+
+      - name: Run tests
+        run: python -m pytest -q

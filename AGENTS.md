@@ -68,10 +68,12 @@ Run these from the repo root. Use the SAME python for every step.
    - Windows: `py -3 --version` (use `py -3` below) or `python --version`.
    - mac/linux: `python3 --version` (use `python3` below).
 
-2. **Install deps:**
+2. **Install deps (editable install — gives a clean `roam` command):**
    ```bash
-   python -m pip install -r requirements.txt
+   python -m pip install -e .
    ```
+   (Bare `python -m pip install -r requirements.txt` also works but skips the entry point;
+   then you must register with `PYTHONPATH` as in the fallback below.)
 
 3. **Install Chrome for Playwright:**
    ```bash
@@ -82,23 +84,24 @@ Run these from the repo root. Use the SAME python for every step.
 
 4. **Smoke test** — confirm the package imports and tests pass:
    ```bash
-   # from repo root, with PYTHONPATH set to repo root:
    python -c "import roam, roam.server; print('roam imports OK')"
    python -m pytest -q
    ```
 
-5. **Register the MCP** with Claude Code. Use the repo's ABSOLUTE path and the SAME python:
-   - Windows example (repo at `C:\Users\you\roam`):
+5. **Register the MCP** with Claude Code.
+   - If you did `pip install -e .` (step 2), registration is clean — no path needed:
      ```bash
-     claude mcp add roam -s user -e PYTHONPATH=C:\Users\you\roam -- python -m roam
+     claude mcp add roam -s user -- roam
      ```
-   - mac/linux example (repo at `/home/you/roam`):
+   - Fallback (no editable install) — use the repo's ABSOLUTE path and the SAME python:
      ```bash
+     # Windows (repo at C:\Users\you\roam):
+     claude mcp add roam -s user -e PYTHONPATH=C:\Users\you\roam -- python -m roam
+     # mac/linux (repo at /home/you/roam):
      claude mcp add roam -s user -e PYTHONPATH=/home/you/roam -- python3 -m roam
      ```
    Replace the path with the real absolute path of THIS folder (`pwd` / `cd`). If multiple
-   pythons exist, use the python's full path in place of `python` so the right interpreter
-   (the one you installed deps into) launches the server.
+   pythons exist, use the python's full path so the right interpreter launches the server.
 
 ## Troubleshooting
 
