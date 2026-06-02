@@ -46,6 +46,43 @@ async def test_audit_unhardened_leaks_webdriver(tmp_path):
         await c.close()
 
 
+async def test_audit_reports_fingerprint_and_cdp_probes(tmp_path):
+    cfg = Config(headless=True, channel=None, stealth_harden=True, profile_dir=str(tmp_path / "p"))
+    c = BrowserController(cfg)
+    try:
+        await c.open(FIXTURE)
+        a = await c.stealth_audit()
+        # new raw probes are present (rebrowser-derived)
+        for k in ("hardware_concurrency", "device_memory", "runtime_enable_leak",
+                  "source_url_leak", "pw_init_scripts", "navigator_own_props"):
+            assert k in a["raw"], k
+        # split verdicts: fingerprint (core) + driver/CDP
+        assert a["verdict"] in ("clean", "ok")
+        assert a["cdp_verdict"] in ("clean", "ok", "leaky")
+        # hardening leaves NO own property on navigator (flag, not a detectable JS override)
+        assert a["checks"]["no_navigator_own_props"] is True
+        # hw/device spoofed to our consistent value, and the spoof getter reads as native
+        assert a["raw"]["hardware_concurrency"] == 8
+        assert a["raw"]["device_memory"] == 8
+        assert a["checks"]["spoof_tostring_native"] is True
+    finally:
+        await c.close()
+
+
+async def test_hardening_does_not_use_detectable_webdriver_override(tmp_path):
+    # the improvement over puppeteer-stealth: webdriver must read `false` (native), never
+    # `undefined`, and navigator must carry no own 'webdriver' property.
+    cfg = Config(headless=True, channel=None, stealth_harden=True, profile_dir=str(tmp_path / "p"))
+    c = BrowserController(cfg)
+    try:
+        await c.open(FIXTURE)
+        a = await c.stealth_audit()
+        assert a["raw"]["webdriver"] is False              # not the string "undefined"
+        assert "webdriver" not in a["raw"]["navigator_own_props"]
+    finally:
+        await c.close()
+
+
 async def test_stealth_backend_drives_full_surface(tmp_path):
     # the patchright backend must drive the entire tool surface unchanged
     cfg = Config(headless=True, channel=None, mode="stealth",

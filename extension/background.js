@@ -194,11 +194,28 @@ function CLEAN_FN(selector) {
   const root = (selector && doc.querySelector(selector)) || doc.querySelector('article') || doc.querySelector('[role="main"]') || doc.querySelector('main') || doc.querySelector('#main') || doc.body;
   return root ? root.innerHTML : '';
 }
-function PROBE_FN() {
+async function PROBE_FN() {
+  // mirrors roam/stealth.py AUDIT_JS so a bridge audit reports the same shape as managed.
   const n = navigator, w = window; let v = null;
   try { const gl = document.createElement('canvas').getContext('webgl'); const e = gl && gl.getExtension('WEBGL_debug_renderer_info'); v = e ? gl.getParameter(e.UNMASKED_VENDOR_WEBGL) : null; } catch (e) {}
   const av = Object.keys(w).filter(k => /cdc_|\$cdc|selenium|webdriver|__driver|__nightmare|domAutomation|__playwright|__puppeteer/i.test(k));
-  return { webdriver: n.webdriver === undefined ? "undefined" : n.webdriver, has_chrome: !!w.chrome, plugins: n.plugins ? n.plugins.length : 0, languages: n.languages || [], webgl_vendor: v, automation_vars: av, headless_ua: / HeadlessChrome/.test(n.userAgent), ua: (n.userAgent || "").slice(0, 90) };
+  let stackLookups = 0;
+  try { const e = new Error(); Object.defineProperty(e, 'stack', { configurable: false, get() { stackLookups += 1; return ''; } }); console.debug(e); await new Promise(r => setTimeout(r, 120)); } catch (e) {}
+  let srcLeak = false;
+  try { const s = (new Error('p').stack || '').toString(); srcLeak = s.includes('pptr:') || s.includes('UtilityScript.'); } catch (e) {}
+  let spoofNative = false;
+  try { const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(n), 'hardwareConcurrency'); spoofNative = !!(d && d.get) && ('' + d.get).includes('[native code]'); } catch (e) {}
+  return {
+    webdriver: n.webdriver === undefined ? "undefined" : n.webdriver,
+    navigator_own_props: Object.getOwnPropertyNames(n),
+    has_chrome: !!w.chrome, plugins: n.plugins ? n.plugins.length : 0, languages: n.languages || [],
+    webgl_vendor: v, hardware_concurrency: n.hardwareConcurrency,
+    device_memory: n.deviceMemory === undefined ? null : n.deviceMemory,
+    automation_vars: av, headless_ua: / HeadlessChrome/.test(n.userAgent),
+    runtime_enable_leak: stackLookups > 0, source_url_leak: srcLeak,
+    pw_init_scripts: typeof w.__pwInitScripts !== 'undefined', spoof_tostring_native: spoofNative,
+    ua: (n.userAgent || "").slice(0, 90),
+  };
 }
 function RELOCATE_FN(fp) {
   const bigrams = (s) => { s = String(s || ''); const m = {}; for (let i = 0; i < s.length - 1; i++) { const g = s.slice(i, i + 2); m[g] = (m[g] || 0) + 1; } return m; };
