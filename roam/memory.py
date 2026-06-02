@@ -244,8 +244,9 @@ class SelectorMemory:
                 txt = f'{r.get("name","")} {r.get("api_url","")} {" ".join(r.get("resp_keys") or [])}'
                 return rank_score(qtok, txt)
 
-            ranked = sorted(out, key=lambda r: (score(r), r.get("hits", 0)), reverse=True)
-            return [r for r in ranked if score(r) > 0] or ranked
+            # recipes drive direct API calls — a non-match must return EMPTY, not a misleading
+            # unrelated recipe (unlike selector recall, where a best-effort fallback is benign).
+            return [r for r in sorted(out, key=score, reverse=True) if score(r) > 0]
         return out
 
     def forget_recipe(self, domain, name=None):

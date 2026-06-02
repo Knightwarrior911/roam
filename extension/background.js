@@ -151,7 +151,9 @@ function connect() {
     if (msg.type === "ping") { return send({ type: "pong" }); }
     if (msg.id && msg.method) handleCommand(msg);
   };
-  ws.onclose = () => { stopHeartbeat(); releaseAll(); pushState(); scheduleReconnect(); };
+  // keep the controlled-tab cue across transient drops (the SW auto-reconnects); only an
+  // explicit Pause / Release tears it down, so the cue doesn't flicker on a heartbeat blip.
+  ws.onclose = () => { stopHeartbeat(); pushState(); scheduleReconnect(); };
   ws.onerror = () => { try { ws.close(); } catch (e) {} };
 }
 function scheduleReconnect() { if (paused) return; const d = BACKOFF[Math.min(attempt, BACKOFF.length - 1)]; attempt++; setTimeout(connect, d); }

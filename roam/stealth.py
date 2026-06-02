@@ -127,18 +127,24 @@ STEALTH_JS = r"""
   try {
     // ---- 1) toString tamper-proofing (install FIRST so our spoof getters read native) ----
     const patched = new WeakMap();         // fn -> reported name
+    // also fix fn.name: a native getter is named e.g. "get hardwareConcurrency", a native
+    // method "query"; leaving our function-expression names ("pq","patchedGp") is a tell.
+    const setName = (fn, name) => {
+      try { Object.defineProperty(fn, 'name', { value: name, configurable: true }); } catch (e) {}
+    };
+    const mark = (fn, reported) => { patched.set(fn, reported); setName(fn, reported); return fn; };
     const origToString = Function.prototype.toString;
     const myToString = function () {
       if (patched.has(this)) return 'function ' + patched.get(this) + '() { [native code] }';
       return origToString.call(this);
     };
-    patched.set(myToString, 'toString');
+    mark(myToString, 'toString');
     // route Function.prototype.toString through our proxy without changing descriptor flags
     Object.defineProperty(Function.prototype, 'toString', {
       value: myToString, writable: true, configurable: true, enumerable: false,
     });
     const defineNative = (obj, prop, getter, name) => {
-      patched.set(getter, name);
+      mark(getter, 'get ' + name);   // native accessors report "get <prop>" for name + toString
       const d = Object.getOwnPropertyDescriptor(obj, prop) || { configurable: true, enumerable: true };
       Object.defineProperty(obj, prop, { get: getter, configurable: true, enumerable: d.enumerable !== false });
     };
@@ -158,7 +164,7 @@ STEALTH_JS = r"""
         return (p && p.name === 'notifications')
           ? Promise.resolve({ state: Notification.permission }) : q(p);
       };
-      patched.set(pq, 'query');
+      mark(pq, 'query');
       navigator.permissions.query = pq;
     }
 
@@ -182,7 +188,7 @@ STEALTH_JS = r"""
           if (p === 37446) return 'Intel Iris OpenGL Engine';   // UNMASKED_RENDERER_WEBGL
           return gp.call(this, p);
         };
-        patched.set(patchedGp, 'getParameter');
+        mark(patchedGp, 'getParameter');
         Ctx.prototype.getParameter = patchedGp;
       }
     }
@@ -225,11 +231,14 @@ async () => {
   let srcLeak = false;
   try { const s = (new Error('p').stack || '').toString(); srcLeak = s.includes('pptr:') || s.includes('UtilityScript.'); } catch (e) {}
 
-  // are our spoof getters undetectable? the prototype getter's source must read native.
-  let spoofNative = false;
+  // are our spoof getters undetectable? the prototype getter's source AND .name must read
+  // native ("get hardwareConcurrency"). Checking only toString misses the .name tell.
+  let spoofNative = false, spoofNameNative = false, tostrNameNative = false;
   try {
     const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(n), 'hardwareConcurrency');
     spoofNative = !!(d && d.get) && ('' + d.get).includes('[native code]');
+    spoofNameNative = !!(d && d.get) && d.get.name === 'get hardwareConcurrency';
+    tostrNameNative = Function.prototype.toString.name === 'toString';
   } catch (e) {}
 
   return {
@@ -247,6 +256,8 @@ async () => {
     source_url_leak: srcLeak,
     pw_init_scripts: typeof w.__pwInitScripts !== 'undefined',
     spoof_tostring_native: spoofNative,
+    spoof_name_native: spoofNameNative,
+    tostring_name_native: tostrNameNative,
     ua: (n.userAgent || '').slice(0, 90),
   };
 }
@@ -271,6 +282,8 @@ def audit_verdict(r):
         "not_headless_ua": not r.get("headless_ua"),
         "webgl_not_swiftshader": "swiftshader" not in str(r.get("webgl_vendor") or "").lower(),
         "spoof_tostring_native": bool(r.get("spoof_tostring_native")),
+        "spoof_name_native": bool(r.get("spoof_name_native")),
+        "tostring_name_native": bool(r.get("tostring_name_native")),
     }
     # CDP = driver-level leaks only patchright/bridge can close (plain Playwright leaks them).
     cdp = {

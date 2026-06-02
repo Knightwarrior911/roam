@@ -122,6 +122,8 @@ def test_get_recipes_semantic_query(tmp_path):
     m.record_recipe("https://x.com/", "profile", "GET", "/api/user/profile", resp_keys=["name"], ts=1)
     r = m.get_recipes(domain="x.com", query="find search results")
     assert r and "search" in r[0]["api_url"]
+    # a query that matches nothing returns EMPTY (recipes must not surface a misleading call)
+    assert m.get_recipes(domain="x.com", query="zzzqqq") == []
 
 
 def test_forget_recipe(tmp_path):

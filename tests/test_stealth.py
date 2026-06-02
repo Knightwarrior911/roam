@@ -69,6 +69,29 @@ async def test_audit_reports_fingerprint_and_cdp_probes(tmp_path):
         await c.close()
 
 
+async def test_spoof_functions_report_native_name(tmp_path):
+    # the spoof getters/methods must report native .name (e.g. "get hardwareConcurrency"),
+    # not their JS function-expression names — otherwise a detector reads the wrong name.
+    cfg = Config(headless=True, channel=None, stealth_harden=True, profile_dir=str(tmp_path / "p"))
+    c = BrowserController(cfg)
+    try:
+        await c.open(FIXTURE)
+        page = await c.current_page()
+        names = await page.evaluate("""() => ({
+          hwc: Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator),'hardwareConcurrency').get.name,
+          toStr: Function.prototype.toString.name,
+          gp: WebGLRenderingContext.prototype.getParameter.name,
+        })""")
+        assert names["hwc"] == "get hardwareConcurrency"
+        assert names["toStr"] == "toString"
+        assert names["gp"] == "getParameter"
+        a = await c.stealth_audit()
+        assert a["checks"]["spoof_name_native"] is True
+        assert a["checks"]["tostring_name_native"] is True
+    finally:
+        await c.close()
+
+
 async def test_hardening_does_not_use_detectable_webdriver_override(tmp_path):
     # the improvement over puppeteer-stealth: webdriver must read `false` (native), never
     # `undefined`, and navigator must carry no own 'webdriver' property.

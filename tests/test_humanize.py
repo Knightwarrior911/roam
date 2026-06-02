@@ -52,6 +52,18 @@ async def test_human_click_triggers_real_click(hctl):
     assert await page.text_content("#out") == "submitted:hi"
 
 
+async def test_human_click_offscreen_element(hctl):
+    # #lnk (an in-page anchor to #section2 which sits 1500px down) — the link itself is at
+    # the top, so click it and assert navigation to the anchor. Then verify a humanized click
+    # on a below-the-fold element resolves via scroll-into-view rather than missing.
+    page = await hctl.current_page()
+    # move the link far down to force off-screen, then humanized-click it
+    await page.evaluate("() => { const a=document.getElementById('lnk'); a.style.marginTop='2000px'; }")
+    await hctl.click(selector="#lnk")
+    # the anchor click navigates the hash to #section2
+    assert page.url.endswith("#section2")
+
+
 async def test_human_scroll_moves_viewport(hctl):
     await hctl.scroll(direction="down")
     page = await hctl.current_page()

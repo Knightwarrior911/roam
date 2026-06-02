@@ -32,7 +32,6 @@ class BrowserController:
         self._routed = set()     # page ids with a bypass route installed
         self._bypass_rule = None # last applied rule (for post-nav cleanup)
         self._cursor = (0.0, 0.0)  # last virtual mouse position (humanize mode)
-        self._uach_applied = set()  # page ids that already got the UA-CH override
         self._api_handler = None    # context "response" listener while recording API recipes
 
     # ---- launch seam (the ONLY thing the two modes differ on) ----
@@ -189,9 +188,13 @@ class BrowserController:
 
     async def goto(self, url, wait="load", tab=None):
         page = await self.page(tab)
-        if should_apply_uach(self.cfg) and id(page) not in self._uach_applied:
+        if should_apply_uach(self.cfg) and not getattr(page, "_roam_uach", False):
             # fix the bundled-chromium UA-CH brand leak before the navigation request goes out
-            self._uach_applied.add(id(page))
+            # (flag on the page object — avoids id() reuse after GC that a set of ids risks)
+            try:
+                page._roam_uach = True
+            except Exception:
+                pass
             await apply_uach(page)
         if self.bypass_on and self._bypass is not None:
             await self._apply_bypass(page, url)
@@ -429,7 +432,15 @@ class BrowserController:
         loc = await self._target(ref, selector, tab)
         if loc is None:
             raise RoamError("BAD_ARGS", "click needs ref, selector, or x/y", "")
-        box = await loc.bounding_box() if human else None
+        box = None
+        if human:
+            # native loc.click() auto-scrolls; the humanized path uses viewport coords, so we
+            # must scroll the element into view first or an off-screen click silently misses.
+            try:
+                await loc.scroll_into_view_if_needed()
+            except Exception:
+                pass
+            box = await loc.bounding_box()
         if box:   # humanized path: move the real cursor to the element center and click
             await self._human_click_xy(page, box["x"] + box["width"] / 2,
                                        box["y"] + box["height"] / 2, button)
@@ -448,6 +459,13 @@ class BrowserController:
             await loc.fill("")            # clear, then type with human cadence
             await loc.focus()
             await human_type(page, text)
+            # guarantee exactness even in edge cases (e.g. maxlength interfering with a
+            # simulated typo+backspace): repair to the intended value if it drifted.
+            try:
+                if await loc.input_value() != text:
+                    await loc.fill(text)
+            except Exception:
+                pass                       # non-value element (contenteditable) — best effort
             if submit:
                 await loc.press("Enter")
         else:
