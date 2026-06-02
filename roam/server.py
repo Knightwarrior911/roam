@@ -162,6 +162,19 @@ async def _stealth_audit(tab: int | None = None):
 async def _solve_cloudflare(max_attempts: int = 3, tab: int | None = None):
     return await _ctl().solve_cloudflare(max_attempts=max_attempts, tab=tab)
 @tool
+async def _extract(fields: dict, item_selector: str | None = None, tab: int | None = None):
+    return await _ctl().extract(fields, item_selector=item_selector, tab=tab)
+@tool
+async def _pdf(path: str | None = None, tab: int | None = None):
+    return await _ctl().pdf(path=path, tab=tab)
+@tool
+async def _download(ref: str | None = None, selector: str | None = None,
+                    url: str | None = None, path: str | None = None, tab: int | None = None):
+    return await _ctl().download(ref=ref, selector=selector, url=url, path=path, tab=tab)
+@tool
+async def _upload(files, ref: str | None = None, selector: str | None = None, tab: int | None = None):
+    return await _ctl().upload(files, ref=ref, selector=selector, tab=tab)
+@tool
 async def _record_api(enable: bool = True, tab: int | None = None):
     return await _ctl().record_api(enable, tab=tab)
 @tool
@@ -234,6 +247,7 @@ _REGISTRY = {
     "dismiss_popups": _dismiss_popups, "find_links": _find_links, "web_search": _web_search,
     "controlled": _controlled, "solve_cloudflare": _solve_cloudflare,
     "record_api": _record_api, "recipes": _recipes,
+    "extract": _extract, "pdf": _pdf, "download": _download, "upload": _upload,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 

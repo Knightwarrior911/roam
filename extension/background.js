@@ -246,6 +246,29 @@ function FINDLINKS_FN(keywords) {
   document.querySelectorAll('a[href]').forEach(a => { let href; try { href = new URL(a.getAttribute('href'), location.href).href; } catch (e) { return; } if (href.startsWith('javascript:') || href.startsWith('mailto:') || seen.has(href)) return; seen.add(href); const text = (a.innerText || a.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120); const hay = (text + ' ' + href).toLowerCase(); if (!kw.length || kw.some(k => hay.includes(k))) out.push({ text, href }); });
   return out.slice(0, 120);
 }
+function EXTRACT_FN(args) {
+  // mirrors roam/extract.py EXTRACT_JS
+  const fields = args.fields || {}; const item = args.item || null;
+  const readEl = (el, attr) => {
+    if (!el) return null;
+    if (attr && attr !== 'text') {
+      if (attr === 'href' || attr === 'src') { try { return new URL(el.getAttribute(attr), location.href).href; } catch (e) {} }
+      return el.getAttribute(attr);
+    }
+    return (el.innerText || el.textContent || '').trim();
+  };
+  const getOne = (root, spec) => {
+    const sel = (typeof spec === 'string') ? spec : spec.selector;
+    const attr = (typeof spec === 'object') ? spec.attr : null;
+    const all = (typeof spec === 'object') ? !!spec.all : false;
+    if (!sel) return null;
+    if (all) return Array.from(root.querySelectorAll(sel)).map(e => readEl(e, attr));
+    return readEl(root.querySelector(sel), attr);
+  };
+  const extractFrom = (root) => { const o = {}; for (const k in fields) o[k] = getOne(root, fields[k]); return o; };
+  if (item) return Array.from(document.querySelectorAll(item)).map(extractFrom);
+  return extractFrom(document);
+}
 async function inject(tabId, fn, ...args) {
   const [res] = await chrome.scripting.executeScript({ target: { tabId }, func: fn, args });
   return res.result;
@@ -337,6 +360,12 @@ async function handleCommand(msg) {
       case "relocate": return reply(await inject(tid, RELOCATE_FN, p.fp));
       case "dismiss": { const r1 = await inject(tid, DISMISS_FN); await new Promise(r => setTimeout(r, 400)); const r2 = await inject(tid, DISMISS_FN); return reply({ clicked: [...r1.clicked, ...r2.clicked], removed: r1.removed + r2.removed }); }
       case "find_links": return reply({ links: await inject(tid, FINDLINKS_FN, p.keywords || []) });
+      case "extract": return reply({ data: await inject(tid, EXTRACT_FN, { fields: p.fields || {}, item: p.item || null }) });
+      case "pdf": {
+        await chrome.debugger.attach({ tabId: tid }, "1.3");
+        try { const r = await chrome.debugger.sendCommand({ tabId: tid }, "Page.printToPDF", { printBackground: true }); return reply({ data: r.data }); }
+        finally { try { await chrome.debugger.detach({ tabId: tid }); } catch (_) {} }
+      }
       case "reload_extension": { setTimeout(() => chrome.runtime.reload(), 200); return reply({ reloading: true }); }
       default: return reply(null, "unknown method: " + msg.method);
     }

@@ -500,6 +500,60 @@ class BrowserController:
         await page.evaluate(js)
         return {"scrolled": direction}
 
+    # ---- structured extraction / files ----
+    async def extract(self, fields, item_selector=None, tab=None):
+        from .extract import EXTRACT_JS
+        page = await self.current_page(tab)
+        return await page.evaluate(EXTRACT_JS, {"fields": fields, "item": item_selector})
+
+    def _downloads_dir(self):
+        d = os.path.join(os.path.dirname(self.cfg.profile_dir) or ".", "downloads")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    async def pdf(self, path=None, tab=None):
+        import base64
+        page = await self.current_page(tab)
+        if not path:
+            path = os.path.join(self._downloads_dir(), "page.pdf")
+        # CDP printToPDF works headed AND headless (page.pdf() is headless-only)
+        try:
+            client = await page.context.new_cdp_session(page)
+            res = await client.send("Page.printToPDF", {"printBackground": True})
+            with open(path, "wb") as f:
+                f.write(base64.b64decode(res["data"]))
+        except Exception:
+            await page.pdf(path=path)   # fallback (headless chromium)
+        return {"pdf": path}
+
+    async def download(self, ref=None, selector=None, url=None, path=None, tab=None):
+        page = await self.current_page(tab)
+        async with page.expect_download() as dl_info:
+            if url:
+                # navigating to an attachment URL triggers a download
+                try:
+                    await page.goto(url)
+                except Exception:
+                    pass
+            else:
+                loc = await self._target(ref, selector, tab)
+                if loc is None:
+                    raise RoamError("BAD_ARGS", "download needs ref, selector, or url", "")
+                await loc.click()
+        dl = await dl_info.value
+        dest = path or os.path.join(self._downloads_dir(), dl.suggested_filename or "download")
+        await dl.save_as(dest)
+        return {"downloaded": dest, "suggested": dl.suggested_filename}
+
+    async def upload(self, files, ref=None, selector=None, tab=None):
+        loc = await self._target(ref, selector, tab)
+        if loc is None:
+            raise RoamError("BAD_ARGS", "upload needs ref or selector (a file input)", "")
+        paths = files if isinstance(files, list) else [files]
+        await loc.set_input_files(paths)
+        await self._remember(loc)
+        return {"uploaded": paths}
+
     # ---- observation ----
     def _wrap_js(self, js):
         body = js.strip()

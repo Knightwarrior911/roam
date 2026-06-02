@@ -54,6 +54,16 @@ def test_recipe_tools_in_registry():
     assert "record_api" in srv.TOOL_NAMES and "recipes" in srv.TOOL_NAMES
 
 
+def test_research_tools_in_registry():
+    assert {"extract", "pdf", "download", "upload"} <= set(srv.TOOL_NAMES)
+
+
+async def test_extract_tool_envelope():
+    await srv._open(url=FIXTURE)
+    r = await srv._extract(fields={"title": "#title"})
+    assert r["ok"] is True and r["data"]["title"] == "Roam Test Page"
+
+
 async def test_record_api_tool_envelope():
     await srv._open(url=FIXTURE)
     r = await srv._record_api(enable=True)

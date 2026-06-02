@@ -208,6 +208,28 @@ class BridgeBrowser:
                 "note": "API-recipe capture currently runs on the managed browser; "
                         "bridge-side capture via the extension is a planned increment"}
 
+    async def extract(self, fields, item_selector=None, tab=None):
+        r = await self.bridge.call("extract", self._t({"fields": fields, "item": item_selector}, tab))
+        return r.get("data") if isinstance(r, dict) else r
+
+    async def pdf(self, path=None, tab=None):
+        import base64, os
+        data = (await self.bridge.call("pdf", self._t({}, tab), timeout=60))["data"]
+        dest = path or os.path.join(os.getcwd(), "page.pdf")
+        with open(dest, "wb") as f:
+            f.write(base64.b64decode(data))
+        return {"pdf": dest}
+
+    async def download(self, ref=None, selector=None, url=None, path=None, tab=None):
+        return {"downloaded": None,
+                "note": "downloads land in your real browser's Downloads folder; trigger the "
+                        "link normally — bridge-mediated save is a planned increment"}
+
+    async def upload(self, files, ref=None, selector=None, tab=None):
+        return {"uploaded": None,
+                "note": "file-input upload over the bridge needs DOM.setFileInputFiles "
+                        "(planned); use the managed browser for automated uploads"}
+
     async def relocate(self, fingerprint, tab=None):
         return await self.bridge.call("relocate", self._t({"fp": fingerprint}, tab))
 
