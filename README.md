@@ -6,8 +6,9 @@ Roam is a Python + Playwright MCP server. It opens a dedicated Chrome with its o
 profile (so your logins persist), and exposes a clean set of tools for an agent to browse
 and act: snapshot the page, click, type, read, screenshot, run JS, manage tabs.
 
-Independent of actionbook and browsermcp. No background daemon, no extension, no cloud,
-no API key. One process that lives as long as your session.
+Independent of actionbook and browsermcp. No background daemon, no cloud, no API key. One
+process that lives as long as your session. (Optional: a small bridge extension lets it
+drive your real, logged-in browser instead — see below.)
 
 ## Install (let your AI agent do it)
 

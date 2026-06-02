@@ -56,7 +56,23 @@ tools. Tell the user, verbatim:
 > **log into any site once there and the login persists.** Your everyday browser is never
 > touched.
 
-That's it. You're done.
+That's it for the managed browser. You're done with the required install.
+
+## Step 4 — optional but recommended: drive the user's REAL logged-in browser (bridge)
+
+The bridge lets Roam drive the browser the user already uses (Chrome / Edge / Comet) — with
+their logins, sessions, and extensions, and not flagged as automation — instead of Roam's
+own fresh browser. This is what makes hard, logged-in, or paywalled sites work.
+
+It needs a **one-time ~30-second manual extension load** (browsers block silent installs).
+Walk the user through [BRIDGE_SETUP.md](BRIDGE_SETUP.md): open `chrome://extensions` (or
+`edge://extensions`), turn on Developer mode, **Load unpacked** → this repo's `extension/`
+folder. Then in Claude Code call the `bridge` tool; the extension auto-connects and every
+browser tool drives the user's real active tab. A "Roam" tab group + an in-page badge show
+which tabs are being controlled; the extension popup has a Pause button.
+
+Per-user state is fresh: logins, cookies, and the selector-memory DB live only on this
+machine (all gitignored) — nothing came from the repo.
 
 ---
 
