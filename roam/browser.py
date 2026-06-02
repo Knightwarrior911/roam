@@ -31,6 +31,7 @@ class BrowserController:
         self._bypass = PaywallBypass(cfg.bypass_rules_dir) if cfg.bypass else None
         self._routed = set()     # page ids with a bypass route installed
         self._bypass_rule = None # last applied rule (for post-nav cleanup)
+        self._cursor = (0.0, 0.0)  # last virtual mouse position (humanize mode)
 
     # ---- launch seam (the ONLY thing the two modes differ on) ----
     def _profile_dir(self):
@@ -353,16 +354,29 @@ class BrowserController:
         return {"imported": len(cookies), "domain": domain, "source": source}
 
     # ---- interaction ----
+    async def _human_click_xy(self, page, x, y, button):
+        from .humanize import human_click
+        self._cursor = await human_click(page, x, y, start=self._cursor, button=button)
+
     async def click(self, element=None, ref=None, selector=None, x=None, y=None,
                     button="left", count=1, tab=None):
         page = await self.current_page(tab)
+        human = self.cfg.humanize and count == 1
         if x is not None and y is not None:
-            await page.mouse.click(float(x), float(y), button=button, click_count=count)
+            if human:
+                await self._human_click_xy(page, float(x), float(y), button)
+            else:
+                await page.mouse.click(float(x), float(y), button=button, click_count=count)
             return {"clicked": [x, y]}
         loc = await self._target(ref, selector, tab)
         if loc is None:
             raise RoamError("BAD_ARGS", "click needs ref, selector, or x/y", "")
-        await loc.click(button=button, click_count=count)
+        box = await loc.bounding_box() if human else None
+        if box:   # humanized path: move the real cursor to the element center and click
+            await self._human_click_xy(page, box["x"] + box["width"] / 2,
+                                       box["y"] + box["height"] / 2, button)
+        else:
+            await loc.click(button=button, click_count=count)
         await self._remember(loc)
         return {"clicked": element or ref or selector}
 
@@ -370,9 +384,18 @@ class BrowserController:
         loc = await self._target(ref, selector, tab)
         if loc is None:
             raise RoamError("BAD_ARGS", "type needs ref or selector", "")
-        await loc.fill(text)
-        if submit:
-            await loc.press("Enter")
+        if self.cfg.humanize:
+            from .humanize import human_type
+            page = await self.current_page(tab)
+            await loc.fill("")            # clear, then type with human cadence
+            await loc.focus()
+            await human_type(page, text)
+            if submit:
+                await loc.press("Enter")
+        else:
+            await loc.fill(text)
+            if submit:
+                await loc.press("Enter")
         await self._remember(loc)
         return {"typed": text, "submitted": submit}
 
@@ -402,6 +425,11 @@ class BrowserController:
             loc = await self._resolve(ref, tab)
             await loc.scroll_into_view_if_needed()
             return {"scrolled": "into_view", "ref": ref}
+        if self.cfg.humanize and direction in ("down", "up"):
+            from .humanize import human_scroll
+            vh = await page.evaluate("() => window.innerHeight") or 800
+            await human_scroll(page, (vh * 0.9) * (1 if direction == "down" else -1))
+            return {"scrolled": direction}
         js = {
             "down": "window.scrollBy(0, window.innerHeight*0.9)",
             "up": "window.scrollBy(0, -window.innerHeight*0.9)",
