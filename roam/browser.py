@@ -440,6 +440,16 @@ class BrowserController:
         except Exception as e:
             raise RoamError("EVAL_ERROR", str(e), "")
 
+    async def set_controlled(self, on=True, label="Roam controlling",
+                             color="#6c5ce7", tab=None):
+        # Paint (or clear) the in-page "this tab is being controlled" cue. Lives in a
+        # closed shadow root under <html> + pointer-events:none, so it never pollutes
+        # reads/snapshots or blocks clicks (enforced by tests/test_cue.py).
+        from .cue import CUE_JS
+        page = await self.current_page(tab)
+        res = await page.evaluate(CUE_JS, {"on": bool(on), "label": label, "color": color})
+        return {"controlled": bool(on), "shown": res.get("shown", False)}
+
     async def read_markdown(self, selector=None, tab=None):
         from .markdown import CLEAN_HTML_JS, to_markdown
         page = await self.current_page(tab)

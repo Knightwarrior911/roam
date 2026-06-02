@@ -184,6 +184,12 @@ class BridgeBrowser:
     async def url(self):
         return (await self.bridge.call("status"))["url"]
 
+    async def set_controlled(self, on=True, label="Roam controlling", color="#6c5ce7", tab=None):
+        # explicit cue toggle over the bridge (the extension also auto-cues on action)
+        r = await self.bridge.call("cue", self._t({"on": on, "label": label, "color": color}, tab))
+        shown = r.get("shown", bool(on)) if isinstance(r, dict) else bool(on)
+        return {"controlled": bool(on), "shown": shown}
+
     async def stealth_audit(self, tab=None):
         from .stealth import audit_verdict
         return audit_verdict(await self.bridge.call("audit", self._t({}, tab)))

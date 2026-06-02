@@ -153,6 +153,9 @@ async def _recall_manual(name: str | None = None, url: str | None = None):
 async def _forget_manual(domain: str, name: str | None = None):
     return {"forgotten": _memory().forget_manual(domain, name)}
 @tool
+async def _controlled(on: bool = True, label: str = "Roam controlling", tab: int | None = None):
+    return await _ctl().set_controlled(on, label=label, tab=tab)
+@tool
 async def _stealth_audit(tab: int | None = None):
     return await _ctl().stealth_audit(tab=tab)
 @tool
@@ -217,6 +220,7 @@ _REGISTRY = {
     "save_manual": _save_manual, "recall_manual": _recall_manual, "forget_manual": _forget_manual,
     "stealth_audit": _stealth_audit, "read_markdown": _read_markdown, "heal": _heal,
     "dismiss_popups": _dismiss_popups, "find_links": _find_links, "web_search": _web_search,
+    "controlled": _controlled,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 

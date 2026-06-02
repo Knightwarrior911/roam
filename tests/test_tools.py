@@ -28,6 +28,18 @@ async def test_error_surfaces_as_envelope():
     assert r["ok"] is False and r["error"]["code"] == "TAB_NOT_FOUND"
 
 
+async def test_controlled_tool_envelope():
+    await srv._open(url=FIXTURE)
+    r = await srv._controlled(on=True)
+    assert r["ok"] is True and r["data"]["controlled"] is True
+    r2 = await srv._controlled(on=False)
+    assert r2["ok"] is True and r2["data"]["controlled"] is False
+
+
+def test_controlled_in_registry():
+    assert "controlled" in srv.TOOL_NAMES
+
+
 def test_browsermcp_parity_present():
     names = set(srv.TOOL_NAMES)
     parity = {"goto", "snapshot", "click", "hover", "type", "select", "press",

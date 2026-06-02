@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    :root { --accent: #6c5ce7; }
+    body { width: 248px; margin: 0; font: 13px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif;
+           color: #1c1c28; background: #fff; }
+    .hdr { display: flex; align-items: center; gap: 8px; padding: 12px 14px 8px; }
+    .logo { width: 18px; height: 18px; border-radius: 5px; background: var(--accent); }
+    .hdr b { font-size: 13px; }
+    .row { display: flex; align-items: center; gap: 8px; padding: 6px 14px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #c4c4cc; flex: none; }
+    .dot.on { background: #18a957; }
+    .dot.paused { background: #e8a33d; }
+    .muted { color: #6b6b76; }
+    .count { margin-left: auto; font-weight: 600; }
+    ul { margin: 2px 14px 6px; padding: 0; list-style: none; max-height: 110px; overflow: auto; }
+    li { padding: 4px 0; border-top: 1px solid #f0f0f4; color: #44444f;
+         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .btns { display: flex; gap: 8px; padding: 10px 14px 14px; }
+    button { flex: 1; padding: 7px 0; border: 1px solid #ddd; border-radius: 7px;
+             background: #f7f7fb; color: #1c1c28; font: inherit; font-weight: 600; cursor: pointer; }
+    button:hover { background: #eeeef5; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.primary:hover { filter: brightness(1.07); }
+    button:disabled { opacity: .45; cursor: default; }
+  </style>
+</head>
+<body>
+  <div class="hdr"><span class="logo"></span><b>Roam Bridge</b></div>
+  <div class="row"><span id="dot" class="dot"></span><span id="status" class="muted">…</span>
+    <span class="count"><span id="count">0</span> tabs</span></div>
+  <ul id="tabs"></ul>
+  <div class="btns">
+    <button id="release">Release tabs</button>
+    <button id="toggle" class="primary">Pause</button>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

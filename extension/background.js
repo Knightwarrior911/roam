@@ -8,22 +8,153 @@ const HEARTBEAT_MS = 10000;
 const BACKOFF = [500, 1000, 2000, 4000, 8000, 15000];
 
 let ws = null, attempt = 0, heartbeatTimer = null, pongTimer = null;
+let paused = false;   // user hit "Pause" in the popup -> stop connecting + drop control
 function log(...a) { console.log("[roam-bridge]", ...a); }
 
+// ---- controlled-tab visual cue (native tab group + in-page border/badge) -------------
+const GROUP_TITLE = "Roam";
+const GROUP_COLOR = "purple";   // chrome.tabGroups color enum
+const CUE_COLOR = "#6c5ce7";
+const CUE_LABEL = "Roam controlling";
+const controlled = new Set();   // tabIds Roam has touched this session
+// methods that mean "Roam is driving this page" -> trigger the cue. Pure reads of tab
+// metadata (status) and liveness (ping) deliberately do NOT.
+// NB: "screenshot" deliberately excluded — the in-page cue is hidden during capture so the
+// agent's screenshots stay clean (see the screenshot case below).
+const CUE_METHODS = new Set(["navigate","back","forward","reload","snapshot","click","type",
+  "select","hover","press","scroll","eval","text","cdp","clean_html","dismiss",
+  "find_links","relocate","wait"]);
+
+// In-page cue. MUST mirror roam/cue.py (the tested canonical): closed shadow root under
+// <html>, pointer-events:none, so it never pollutes reads/snapshots or blocks clicks.
+function CUE_FN(args) {
+  const HOST_ID = '__roam_cue_host__';
+  const root = document.documentElement || document.body;
+  const existing = document.getElementById(HOST_ID);
+  if (existing) existing.remove();
+  if (!args || !args.on) return { shown: false };
+  if (!root) return { shown: false };
+  const color = args.color || '#6c5ce7';
+  const label = args.label || 'Roam controlling';
+  const host = document.createElement('div');
+  host.id = HOST_ID;
+  host.style.cssText = 'all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647';
+  const shadow = host.attachShadow ? host.attachShadow({ mode: 'closed' }) : host;
+  const style = document.createElement('style');
+  style.textContent =
+    ':host,*{pointer-events:none!important;box-sizing:border-box}' +
+    '.border{position:fixed;inset:0;border:3px solid ' + color + ';border-radius:6px;' +
+      'box-shadow:0 0 0 1px rgba(0,0,0,.25) inset}' +
+    '.badge{position:fixed;top:10px;right:10px;display:flex;align-items:center;gap:7px;' +
+      'font:600 12px/1.2 -apple-system,Segoe UI,Roboto,sans-serif;color:#fff;' +
+      'background:' + color + ';padding:6px 11px;border-radius:999px;' +
+      'box-shadow:0 2px 8px rgba(0,0,0,.35);white-space:nowrap}' +
+    '.dot{width:8px;height:8px;border-radius:50%;background:#fff;' +
+      'animation:roampulse 1.2s ease-in-out infinite}' +
+    '@keyframes roampulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}';
+  const border = document.createElement('div'); border.className = 'border';
+  const badge = document.createElement('div'); badge.className = 'badge';
+  const dot = document.createElement('span'); dot.className = 'dot';
+  const text = document.createElement('span'); text.textContent = '🤖 ' + label;
+  badge.appendChild(dot); badge.appendChild(text);
+  shadow.appendChild(style); shadow.appendChild(border); shadow.appendChild(badge);
+  root.appendChild(host);
+  return { shown: true };
+}
+
+async function injectCue(tabId, on, label, color) {
+  try {
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId }, func: CUE_FN,
+      args: [{ on, label: label || CUE_LABEL, color: color || CUE_COLOR }],
+    });
+    return r && r.result;
+  } catch (e) { log("cue inject failed (likely a restricted page):", e.message || e); return null; }
+}
+
+// Native tab-strip cue: drop the tab into a labeled "Roam" group. Errors are returned
+// (not silently swallowed) so the caller can surface them instead of guessing.
+async function groupTab(tabId) {
+  if (!chrome.tabGroups || !chrome.tabs.group) return { grouped: false, reason: "no tabGroups API" };
+  try {
+    const t = await chrome.tabs.get(tabId);
+    if (typeof t.windowId !== "number") return { grouped: false, reason: "tab has no window" };
+    const existing = await chrome.tabGroups.query({ title: GROUP_TITLE, windowId: t.windowId });
+    let gid;
+    if (existing.length) { gid = existing[0].id; await chrome.tabs.group({ groupId: gid, tabIds: [tabId] }); }
+    else {
+      gid = await chrome.tabs.group({ tabIds: [tabId], createProperties: { windowId: t.windowId } });
+      await chrome.tabGroups.update(gid, { title: GROUP_TITLE, color: GROUP_COLOR });
+    }
+    return { grouped: true, groupId: gid };
+  } catch (e) { return { grouped: false, reason: String(e && e.message || e) }; }
+}
+
+async function ungroupTab(tabId) {
+  try { if (chrome.tabs.ungroup) await chrome.tabs.ungroup(tabId); } catch (e) {}
+}
+
+async function markControlled(tabId) {
+  if (controlled.has(tabId)) return;
+  controlled.add(tabId);
+  await groupTab(tabId);
+  await injectCue(tabId, true);
+  pushState();
+}
+
+async function release(tabId) {
+  if (!controlled.delete(tabId)) { pushState(); return; }
+  await injectCue(tabId, false);
+  await ungroupTab(tabId);
+  pushState();
+}
+
+async function releaseAll() {
+  const ids = [...controlled];
+  controlled.clear();
+  for (const id of ids) { await injectCue(id, false); await ungroupTab(id); }
+  pushState();
+}
+
+// keep the cue alive across the page's OWN navigations (a new document wipes it)
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (controlled.has(tabId) && info.status === "complete") injectCue(tabId, true);
+});
+chrome.tabs.onRemoved.addListener((tabId) => { if (controlled.delete(tabId)) pushState(); });
+
+// popup <-> service worker
+function stateSnapshot() {
+  return { connected: !!(ws && ws.readyState === WebSocket.OPEN), paused,
+           controlledTabIds: [...controlled], count: controlled.size };
+}
+function pushState() { try { chrome.runtime.sendMessage({ type: "roam-state", state: stateSnapshot() }).catch(() => {}); } catch (e) {} }
+chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (!msg || !msg.type) return;
+  if (msg.type === "roam-get-state") { reply(stateSnapshot()); return true; }
+  if (msg.type === "roam-release-all") { releaseAll(); reply({ ok: true }); return true; }
+  if (msg.type === "roam-pause") {
+    // a plain close would just auto-reconnect; a paused flag actually stops Roam.
+    paused = true; releaseAll(); try { if (ws) ws.close(); } catch (e) {}
+    pushState(); reply({ ok: true, paused: true }); return true;
+  }
+  if (msg.type === "roam-resume") { paused = false; connect(); pushState(); reply({ ok: true, paused: false }); return true; }
+});
+
 function connect() {
+  if (paused) return;
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   try { ws = new WebSocket(URL); } catch (e) { return scheduleReconnect(); }
-  ws.onopen = () => { attempt = 0; log("connected"); send({ type: "hello", version: "0.2.0", ua: navigator.userAgent }); startHeartbeat(); };
+  ws.onopen = () => { attempt = 0; log("connected"); send({ type: "hello", version: "0.3.0", ua: navigator.userAgent }); startHeartbeat(); pushState(); };
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch (e) { return; }
     if (msg.type === "pong") { clearTimeout(pongTimer); return; }
     if (msg.type === "ping") { return send({ type: "pong" }); }
     if (msg.id && msg.method) handleCommand(msg);
   };
-  ws.onclose = () => { stopHeartbeat(); scheduleReconnect(); };
+  ws.onclose = () => { stopHeartbeat(); releaseAll(); pushState(); scheduleReconnect(); };
   ws.onerror = () => { try { ws.close(); } catch (e) {} };
 }
-function scheduleReconnect() { const d = BACKOFF[Math.min(attempt, BACKOFF.length - 1)]; attempt++; setTimeout(connect, d); }
+function scheduleReconnect() { if (paused) return; const d = BACKOFF[Math.min(attempt, BACKOFF.length - 1)]; attempt++; setTimeout(connect, d); }
 function send(o) { if (ws && ws.readyState === WebSocket.OPEN) { try { ws.send(JSON.stringify(o)); } catch (e) {} } }
 function startHeartbeat() { stopHeartbeat(); heartbeatTimer = setInterval(() => { send({ type: "ping" }); pongTimer = setTimeout(() => { try { ws.close(); } catch (e) {} }, 5000); }, HEARTBEAT_MS); }
 function stopHeartbeat() { clearInterval(heartbeatTimer); clearTimeout(pongTimer); heartbeatTimer = pongTimer = null; }
@@ -113,6 +244,7 @@ function waitComplete(tabId, timeout = 30000) {
 
 async function handleCommand(msg) {
   const reply = (data, error) => send({ id: msg.id, result: data, error: error || null });
+  if (paused) return reply(null, "Roam is paused by the user (resume from the extension popup)");
   try {
     const p = msg.params || {};
     // tab-management commands don't need a resolved tab up front
@@ -125,14 +257,25 @@ async function handleCommand(msg) {
       if (p.url) await waitComplete(t.id);
       return reply({ id: t.id, url: t.url });
     }
-    if (msg.method === "close_tab") { await chrome.tabs.remove(Number(p.tabId)); return reply({ closed: p.tabId }); }
+    if (msg.method === "close_tab") { controlled.delete(Number(p.tabId)); await chrome.tabs.remove(Number(p.tabId)); pushState(); return reply({ closed: p.tabId }); }
     if (msg.method === "switch_tab") { await chrome.tabs.update(Number(p.tabId), { active: true }); return reply({ active: p.tabId }); }
+    if (msg.method === "release_all") { await releaseAll(); return reply({ released: "all" }); }
 
     const tab = await resolveTab(p);
     const tid = tab.id;
+    // auto-show the controlled-tab cue (native group + in-page border/badge) the first
+    // time Roam drives a given tab; explicit cue/release commands also available.
+    if (CUE_METHODS.has(msg.method)) await markControlled(tid);
     switch (msg.method) {
       case "ping": return reply({ ok: true, ts: Date.now() });
       case "status": return reply({ tabId: tid, url: tab.url, title: tab.title });
+      case "cue": {
+        if (p.on === false) { await release(tid); return reply({ shown: false }); }
+        await markControlled(tid);
+        if (p.label || p.color) await injectCue(tid, true, p.label, p.color);  // honor custom
+        return reply({ shown: true });
+      }
+      case "release": { await release(tid); return reply({ released: tid }); }
       case "navigate": { await chrome.tabs.update(tid, { url: p.url }); await waitComplete(tid); const t2 = await chrome.tabs.get(tid); return reply({ tabId: tid, url: t2.url, title: t2.title }); }
       case "back": { await chrome.tabs.goBack(tid); return reply({ ok: true }); }
       case "forward": { await chrome.tabs.goForward(tid); return reply({ ok: true }); }
@@ -155,12 +298,17 @@ async function handleCommand(msg) {
         await waitComplete(tid, ms); return reply({ waited: "load" });
       }
       case "screenshot": {
+        // hide the in-page cue during capture so the agent's screenshot is clean, then
+        // restore it. (The native tab-group cue isn't in page content, so it's unaffected.)
+        const wasCued = controlled.has(tid);
+        if (wasCued) await injectCue(tid, false);
         try {
           await chrome.debugger.attach({ tabId: tid }, "1.3");
           const shot = await chrome.debugger.sendCommand({ tabId: tid }, "Page.captureScreenshot", { format: "png", captureBeyondViewport: !!p.full, fromSurface: true });
           await chrome.debugger.detach({ tabId: tid });
           return reply({ dataUrl: "data:image/png;base64," + shot.data });
         } catch (e) { try { await chrome.debugger.detach({ tabId: tid }); } catch (_) {} const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }); return reply({ dataUrl }); }
+        finally { if (wasCued) await injectCue(tid, true); }
       }
       case "cdp": {
         await chrome.debugger.attach({ tabId: tid }, "1.3");
