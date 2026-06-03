@@ -73,6 +73,9 @@ class BrowserController:
             await self._launch_managed()    # Playwright-managed persistent context
         self._ctx.set_default_timeout(self.cfg.default_timeout_ms)
         self._ctx.on("page", lambda p: self._register_page(p))
+        # if the window/process is closed (by the user or a crash), drop state so the
+        # next ensure() relaunches instead of failing forever with NO_BROWSER.
+        self._ctx.on("close", lambda *_: self._on_context_close())
         existing = self._ctx.pages or [await self._ctx.new_page()]
         for p in existing:
             self._register_page(p)
@@ -162,7 +165,38 @@ class BrowserController:
         page.on("close", lambda: self.pages.pop(tid, None))
         return tid
 
+    def _ctx_alive(self):
+        """True only if the context still has a live, connected browser behind it."""
+        ctx = self._ctx
+        if ctx is None:
+            return False
+        if self._browser is not None and not self._browser.is_connected():
+            return False
+        try:
+            return len(ctx.pages) > 0 or len(self.pages) > 0
+        except Exception:
+            return False
+
+    def _on_context_close(self):
+        """Browser window/process went away: forget it so ensure() relaunches cleanly."""
+        self._ctx = None
+        self._browser = None
+        self.pages.clear()
+        self.active = None
+
+    async def _reset(self):
+        try:
+            if self._pw is not None:
+                await self._pw.stop()
+        except Exception:
+            pass
+        self._pw = None
+        self._on_context_close()
+
     async def ensure(self):
+        # recover from a closed/crashed browser (stale ctx) instead of NO_BROWSER forever
+        if self._ctx is not None and not self._ctx_alive():
+            await self._reset()
         if self._ctx is None:
             await self._launch()
 
