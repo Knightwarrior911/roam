@@ -76,3 +76,33 @@ def test_browsermcp_parity_present():
     parity = {"goto", "snapshot", "click", "hover", "type", "select", "press",
               "screenshot", "console", "back", "forward", "wait"}
     assert parity <= names
+
+
+async def test_read_markdown_url_navigates_in_one_call():
+    # no prior _open/_goto: url= must navigate first, then return markdown
+    r = await srv._read_markdown(url=FIXTURE)
+    assert r["ok"] is True
+    assert isinstance(r["data"], str) and r["data"].strip()
+
+
+async def test_snapshot_url_navigates_in_one_call():
+    r = await srv._snapshot(url=FIXTURE)
+    assert r["ok"] is True and "[ref=" in r["data"]
+
+
+async def test_find_links_url_navigates():
+    r = await srv._find_links(url=FIXTURE)
+    assert r["ok"] is True and "links" in r["data"]
+
+
+def test_server_instructions_pitch_roam():
+    # the MCP server advertises itself so an agent knows to prefer it
+    assert "read_markdown" in srv.ROAM_INSTRUCTIONS
+    assert "stealth" in srv.ROAM_INSTRUCTIONS.lower()
+
+
+def test_key_tools_have_descriptions():
+    # docstrings become MCP tool descriptions; the core tools must not be blank
+    for name in ("read_markdown", "click", "goto", "snapshot", "type", "extract"):
+        fn = srv._REGISTRY[name]
+        assert (fn.__doc__ or "").strip(), f"{name} has no description"
