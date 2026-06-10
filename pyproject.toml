@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 stealth = ["patchright>=1.44.0"]   # stealth-mode backend; heavy (patched chromium driver)
+fast = ["curl_cffi>=0.7"]          # fast no-render scrape engine (Chrome TLS/JA3 impersonation)
 dev = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0"]
 
 [project.scripts]

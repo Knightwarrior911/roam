@@ -164,6 +164,24 @@ async def _find_links(keywords: list | None = None, tab: int | None = None,
     await _nav_if(url, tab, wait)
     return {"links": await _ctl().find_links(keywords, tab=tab)}
 @tool
+async def _scrape(urls: list, concurrency: int = 5, engine: str = "browser",
+                  fmt: str = "markdown", eval: str | None = None,
+                  wait: str = "load", timeout_ms: int | None = None):
+    """Scrape many URLs in parallel -> list of {url, ok, data|error}. The fast way to read
+    or extract from a batch of pages in one call.
+    engine: browser (real render, logged-in, beats anti-bot) | fast (no-render, TLS-emulated
+    HTTP, much faster for static/JS-light pages) | auto (try fast, fall back to browser if blocked).
+    fmt: markdown | text | links | assets | html. eval=JS runs per page and overrides fmt."""
+    return {"results": await _ctl().scrape_many(urls, concurrency, engine, fmt, eval, wait, timeout_ms)}
+@tool
+async def _assets(tab: int | None = None, url: str | None = None,
+                  kinds: list | None = None, wait: str = "load"):
+    """List every sub-resource the page references (images, scripts, styles, fonts, media,
+    iframes, links) as absolute URLs, categorized + flattened. Pass url= to navigate first.
+    kinds filters categories, e.g. kinds=["images","media"]."""
+    await _nav_if(url, tab, wait)
+    return await _ctl().assets(kinds=kinds, tab=tab)
+@tool
 async def _web_search(query: str, site: str | None = None, filetype: str | None = None,
                       intitle: str | None = None, engine: str = "duckduckgo", tab: int | None = None):
     """Search the web and return the result links (text + href). Optional `site`, `filetype`,
@@ -317,6 +335,7 @@ _REGISTRY = {
     "save_manual": _save_manual, "recall_manual": _recall_manual, "forget_manual": _forget_manual,
     "stealth_audit": _stealth_audit, "read_markdown": _read_markdown, "heal": _heal,
     "dismiss_popups": _dismiss_popups, "find_links": _find_links, "web_search": _web_search,
+    "scrape": _scrape, "assets": _assets,
     "controlled": _controlled, "solve_cloudflare": _solve_cloudflare,
     "record_api": _record_api, "recipes": _recipes,
     "extract": _extract, "pdf": _pdf, "download": _download, "upload": _upload,

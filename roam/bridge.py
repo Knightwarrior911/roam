@@ -163,6 +163,58 @@ class BridgeBrowser:
         r = await self.bridge.call("find_links", self._t({"keywords": keywords or []}, tab))
         return r.get("links", [])
 
+    async def assets(self, kinds=None, tab=None):
+        from .assets import ASSETS_JS
+        # the extension evals an expression: invoke the extractor function inline
+        data = await self.eval_js(f"({ASSETS_JS})(null)", tab=tab)
+        if kinds and isinstance(data, dict):
+            keep = set(kinds)
+            flat = data.get("flat", [])
+            data = {k: v for k, v in data.items() if k == "flat" or k in keep}
+            data["flat"] = flat
+        return data
+
+    async def scrape_many(self, urls, concurrency=5, engine="browser",
+                          fmt="markdown", eval=None, wait="load", timeout_ms=None):
+        """Parallel scrape over the bridge: a real tab per URL (bounded), navigate, extract,
+        close. engine fast/auto behave as browser here — the bridge IS a real browser.
+        Returns {url, ok, data|error} order-aligned with `urls`."""
+        sem = asyncio.Semaphore(max(1, min(int(concurrency or 5), 12)))
+
+        async def _extract(tid):
+            if eval:
+                return await self.eval_js(eval, tab=tid)
+            if fmt == "markdown":
+                return await self.read_markdown(tab=tid)
+            if fmt == "text":
+                return await self.read(tab=tid)
+            if fmt == "links":
+                return await self.find_links(tab=tid)
+            if fmt == "assets":
+                return await self.assets(tab=tid)
+            if fmt == "html":
+                return await self.eval_js("document.documentElement.outerHTML", tab=tid)
+            raise BridgeError(f"unknown fmt '{fmt}' (fmt: markdown|text|links|assets|html)")
+
+        async def _one(url):
+            async with sem:
+                tid = None
+                try:
+                    r = await self.new_tab(url)
+                    tid = (r or {}).get("tabId") or (r or {}).get("id")
+                    data = await _extract(tid)
+                    return {"url": url, "ok": True, "data": data}
+                except Exception as e:
+                    return {"url": url, "ok": False, "error": str(e)}
+                finally:
+                    if tid is not None:
+                        try:
+                            await self.close_tab(tid)
+                        except Exception:
+                            pass
+
+        return await asyncio.gather(*[_one(u) for u in urls])
+
     async def eval_js(self, js, tab=None):
         return (await self.bridge.call("eval", self._t({"js": js}, tab)))["value"]
 

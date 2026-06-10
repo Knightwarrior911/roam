@@ -11,6 +11,43 @@ from .bypass import PaywallBypass, CLEANUP_JS
 from .stealth import STEALTH_JS, build_stealth_args, AUDIT_JS, audit_verdict, should_apply_uach, apply_uach
 from .heal import FINGERPRINT_EL_JS, RELOCATE_JS
 
+_BLOCK_MARKERS = ("just a moment", "cf-browser-verification", "challenge-platform",
+                  "/cdn-cgi/challenge", "enable javascript and cookies", "attention required!",
+                  "__cf_chl", "px-captcha", "verifying you are human")
+
+
+def _looks_blocked(body, status):
+    """Heuristic: does this look like an anti-bot interstitial / JS-required wall rather than
+    real content? Drives engine='auto' fallback to the real browser."""
+    if status in (403, 429, 503):
+        return True
+    low = (body or "")[:4000].lower()
+    if any(m in low for m in _BLOCK_MARKERS):
+        return True
+    if len(body or "") < 500 and "<body" in low:   # near-empty shell = JS-rendered app
+        return True
+    return False
+
+
+def _extract_static(html, fmt, url):
+    """Run the requested representation over RAW (un-rendered) HTML, offline. Mirrors
+    _render_extract but server-side via the string helpers (no browser)."""
+    if fmt == "markdown":
+        from .markdown import clean_html_str, to_markdown
+        return to_markdown(clean_html_str(html, base_url=url))
+    if fmt == "html":
+        return html
+    if fmt == "text":
+        from .markdown import strip_to_text
+        return strip_to_text(html)
+    if fmt == "links":
+        from .markdown import extract_links_str
+        return extract_links_str(html, base_url=url)
+    if fmt == "assets":
+        from .assets import extract_assets_str
+        return extract_assets_str(html, base_url=url)
+    raise RoamError("BAD_ARGS", f"unknown fmt '{fmt}'", "fmt: markdown|text|links|assets|html")
+
 
 class BrowserController:
     def __init__(self, cfg):
@@ -670,6 +707,113 @@ class BrowserController:
         from .popups import FIND_LINKS_JS
         page = await self.current_page(tab)
         return await page.evaluate(FIND_LINKS_JS, keywords or [])
+
+    async def assets(self, kinds=None, tab=None):
+        """Every sub-resource URL the rendered page references, categorized + flattened.
+        Sees JS-injected assets a static parser misses. kinds filters categories."""
+        from .assets import ASSETS_JS
+        page = await self.current_page(tab)
+        data = await page.evaluate(ASSETS_JS, None)
+        if kinds:
+            keep = set(kinds)
+            flat = data.get("flat", [])
+            data = {k: v for k, v in data.items() if k == "flat" or k in keep}
+            data["flat"] = flat
+        return data
+
+    # ---- bulk scrape (parallel pages + the no-render fast lane) ----
+    async def scrape_many(self, urls, concurrency=5, engine="browser",
+                          fmt="markdown", eval=None, wait="load", timeout_ms=None):
+        """Scrape many URLs in parallel using throwaway pages on the SHARED logged-in
+        context (so every fetch stays authenticated + stealth-hardened). Returns a list
+        of {url, ok, data|error}, order-aligned with `urls`."""
+        await self.ensure()
+        concurrency = max(1, min(int(concurrency or 5), 12))   # hard cap: don't hammer the target
+        prev_active = self.active                              # batch must not steal the user's active tab
+        sem = asyncio.Semaphore(concurrency)
+        states = {"load": "load", "domcontentloaded": "domcontentloaded", "none": "commit"}
+
+        async def _one(url):
+            async with sem:
+                if engine in ("fast", "auto"):
+                    r = await self._fast_fetch(url, fmt=fmt, timeout_ms=timeout_ms)
+                    if engine == "fast" or (r and r.get("ok")):
+                        return r                               # auto: fall through to browser only if blocked
+                page = await self._ctx.new_page()
+                try:
+                    await page.goto(url, wait_until=states.get(wait, "load"),
+                                    timeout=timeout_ms or self.cfg.default_timeout_ms)
+                    data = await self._render_extract(page, fmt, eval)
+                    return {"url": url, "ok": True, "data": data}
+                except Exception as e:
+                    return {"url": url, "ok": False, "error": str(e)}
+                finally:
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+
+        try:
+            return await asyncio.gather(*[_one(u) for u in urls])
+        finally:
+            if prev_active in self.pages:
+                self.active = prev_active
+
+    async def _render_extract(self, page, fmt="markdown", eval=None):
+        """Pull the requested representation out of an already-loaded page."""
+        if eval:
+            return await page.evaluate(self._wrap_js(eval))
+        if fmt == "markdown":
+            from .markdown import CLEAN_HTML_JS, to_markdown
+            return to_markdown(await page.evaluate(CLEAN_HTML_JS, None))
+        if fmt == "text":
+            return await page.locator("body").first.inner_text()
+        if fmt == "links":
+            from .popups import FIND_LINKS_JS
+            return await page.evaluate(FIND_LINKS_JS, [])
+        if fmt == "assets":
+            from .assets import ASSETS_JS
+            return await page.evaluate(ASSETS_JS, None)
+        if fmt == "html":
+            return await page.content()
+        raise RoamError("BAD_ARGS", f"unknown fmt '{fmt}'", "fmt: markdown|text|links|assets|html")
+
+    async def _fast_fetch(self, url, fmt="markdown", timeout_ms=None):
+        """No-render HTTP fetch with real Chrome TLS/JA3 impersonation (curl_cffi). Reuses the
+        logged-in context's cookies so authenticated pages still work. Returns {url, ok, data|error}.
+        Cheap + fast for static / JS-light pages; falls back to the browser on block/JS-required."""
+        try:
+            from curl_cffi.requests import AsyncSession
+        except Exception:
+            return {"url": url, "ok": False, "error": "curl_cffi not installed",
+                    "hint": "pip install curl_cffi  (enables the fast no-render scrape engine)"}
+        try:
+            cookies = await self._cookies_for(url)
+            timeout = (timeout_ms or self.cfg.default_timeout_ms) / 1000
+            async with AsyncSession() as s:
+                r = await s.get(url, impersonate="chrome", cookies=cookies,
+                                timeout=timeout, allow_redirects=True)
+            body = r.text or ""
+            if r.status_code >= 400 or _looks_blocked(body, r.status_code):
+                return {"url": url, "ok": False,
+                        "error": f"fast fetch blocked/failed (http {r.status_code})"}
+            return {"url": url, "ok": True, "data": _extract_static(body, fmt, url)}
+        except Exception as e:
+            return {"url": url, "ok": False, "error": str(e)}
+
+    async def _cookies_for(self, url):
+        """Best-effort: pull this origin's cookies out of the live context as a name->value dict
+        for curl_cffi, so the fast lane stays logged-in. Never raises."""
+        try:
+            from urllib.parse import urlparse
+            host = urlparse(url).netloc
+            if self._ctx is None:
+                return {}
+            cks = await self._ctx.cookies()
+            return {c["name"]: c["value"] for c in cks
+                    if host.endswith((c.get("domain") or "").lstrip("."))}
+        except Exception:
+            return {}
 
     async def screenshot(self, full=False, selector=None, tab=None):
         page = await self.current_page(tab)
