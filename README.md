@@ -40,11 +40,18 @@ Browsing: `open · goto · back · forward · reload · snapshot · click · hov
 press · scroll · read · eval · screenshot · console · wait · cdp` — plus concurrent
 multi-tab (`tabs · new_tab · switch_tab · close_tab`, every tool takes a `tab` id).
 
-Research + extraction: `read_markdown` (LLM-ready markdown; pass `query=` for BM25
-query-focused passages only), `extract` (schema/selector → structured JSON, incl. repeating
-rows), `verify` (assert text/value/visible → `{ok}` instead of re-snapshotting), `pdf` (save
-page as PDF), `download` / `upload`, `find_links` (by intent), `web_search` (operator-aware),
-`cookies` (inspect/clear), `dismiss_popups` (cookie/consent/modals).
+Fewer steps: `observe` (rank the elements relevant to an instruction → ready-to-run plan),
+`act` (pick + wait + click/type in one call, with `%var%` secret substitution + self-heal),
+`verify` (assert text/value/visible → `{ok}`), `wait_for_ref` (gate on visible/enabled/
+stable), `last_dialog` (what a confirm() popped). Snapshot pierces open shadow roots +
+same-origin iframes (`fN-` refs); fixed/sticky elements are visible.
+
+Research + extraction: `read_markdown` (LLM-ready markdown; `query=` for BM25 query-focused
+passages, `readability=True` for trafilatura main-content, `use_cache=True` for O(1) replay,
+`max_chars=` to budget output), `extract` (schema/selector → JSON), `extract_auto`
+(auto-detect repeating items, no selectors), `structured_data` (JSON-LD/microdata/OpenGraph
+merge), `pdf` (save) / `pdf_text` (extract text from filings), `storage` (local/session
+get/set/clear), `download` / `upload`, `find_links`, `web_search`, `cookies`, `dismiss_popups`.
 
 Backend control: `bridge` (start + block-wait for your real browser via the extension —
 truthful connected status, no phantom "click to connect" step), `set_mode` (`bridge` |
@@ -201,13 +208,16 @@ humanization, a bounded Cloudflare Turnstile solver, API-recipe capture (`record
 
 v4 (reliability + accuracy + fewer steps): explicit sticky `set_mode`/`mode`/`set_channel`
 (bridge mode fails loud instead of silently opening a different browser; Edge auto-detected),
-a truthful `bridge()` that block-waits for the extension (no phantom "click to connect"),
+truthful `bridge()` that block-waits for the extension (no phantom "click to connect"),
 SPA-correct bridge `type` (React/Vue/contenteditable), snapshot that sees `position:fixed`/
-`sticky` elements, bridge `read` that descends shadow DOM + same-origin iframes, content
-cleaner that keeps embeds/forms and honors `<base href>` with an 86-entry deny + allow list
-(single source of truth, no JS/Python drift), `read_markdown(query=…)` BM25 query-focused
-passages, and a `verify` assertion tool. CI runs the test suite (183 tests) on every push.
+`sticky` AND descends open shadow roots + same-origin iframes (`fN-` refs), bridge `read`
+that descends shadow/iframe, content cleaner that keeps embeds/forms + honors `<base href>`
+with an 86-entry deny + allow list (single source of truth, no JS/Python drift),
+`read_markdown(query=/readability=/use_cache=/max_chars=)`, `observe`+`act` fused primitives
+with `%var%` secrets, `verify`/`wait_for_ref`/`last_dialog`, auto-handled native dialogs,
+`extract_auto`+`structured_data`, `pdf_text`, `storage`, an in-session read cache, `prewarm`,
+the four bridge capability methods (download/upload/cookies/record_api) implemented, and
+read-only MCP tool annotations. 62 tools. CI runs the test suite (210 tests) on every push.
 
-Planned next: real-input fidelity over the bridge (`chrome.debugger Input`), bridge-side
-download/upload/cookies/record_api (the remaining stub methods), `observe`/`act` fused
-primitives, readability-grade root detection, output budgeting, true embedding-based recall.
+Planned next: CDP real-input fidelity over the bridge (`Input.dispatchMouseEvent`),
+LLM-driven `extract_schema`, true embedding-based recall.

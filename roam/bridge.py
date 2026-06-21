@@ -398,6 +398,36 @@ class BridgeBrowser:
         from .extract import STRUCTURED_DATA_JS
         return await self.eval_js(f"({STRUCTURED_DATA_JS})()", tab=tab)
 
+    async def pdf_text(self, url=None, max_pages=50, tab=None):
+        import asyncio as _a, io, urllib.request
+        if not url:
+            url = await self.url()
+        data = await _a.to_thread(lambda: urllib.request.urlopen(url, timeout=30).read())
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(data))
+        n = min(len(reader.pages), max_pages)
+        parts = []
+        for i in range(n):
+            try:
+                parts.append(reader.pages[i].extract_text() or "")
+            except Exception:
+                parts.append("")
+        text = "\n\n".join(parts).strip()
+        return {"pages": n, "total_pages": len(reader.pages), "chars": len(text), "text": text}
+
+    async def storage(self, action="get", which="local", key=None, value=None, tab=None):
+        store = "localStorage" if which == "local" else "sessionStorage"
+        if action == "clear":
+            await self.eval_js(f"{store}.clear()", tab=tab); return {"cleared": which}
+        if action == "set":
+            await self.eval_js(f"{store}.setItem({key!r}, {value!r})", tab=tab); return {"set": key}
+        if key is not None:
+            v = await self.eval_js(f"{store}.getItem({key!r})", tab=tab)
+            return {"key": key, "value": v}
+        allkv = await self.eval_js(
+            f"(() => {{ const o={{}}; for(let i=0;i<{store}.length;i++){{const k={store}.key(i);o[k]={store}.getItem(k);}} return o; }})()", tab=tab)
+        return {which: allkv}
+
     async def pdf(self, path=None, tab=None):
         import base64, os
         data = (await self.bridge.call("pdf", self._t({}, tab), timeout=60))["data"]

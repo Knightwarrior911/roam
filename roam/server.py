@@ -401,6 +401,18 @@ async def _structured_data(tab: int | None = None, url: str | None = None, wait:
 async def _pdf(path: str | None = None, tab: int | None = None):
     return await _ctl().pdf(path=path, tab=tab)
 @tool
+async def _pdf_text(url: str | None = None, max_pages: int = 50, tab: int | None = None):
+    """Extract TEXT from a PDF (not an image) — for reading filings/reports/10-Ks. Downloads
+    the PDF (url=, or the current page if it's a PDF) and pulls text with pypdf. Returns
+    {pages, total_pages, chars, text}. Scanned/image PDFs need OCR (not bundled)."""
+    return await _ctl().pdf_text(url=url, max_pages=max_pages, tab=tab)
+@tool
+async def _storage(action: str = "get", which: str = "local", key: str | None = None,
+                   value: str | None = None, tab: int | None = None):
+    """Read/write web storage: which=local|session, action=get|set|clear. get with no key
+    dumps all keys. The persistence primitive — save/replay auth state without an eval call."""
+    return await _ctl().storage(action=action, which=which, key=key, value=value, tab=tab)
+@tool
 async def _download(ref: str | None = None, selector: str | None = None,
                     url: str | None = None, path: str | None = None, tab: int | None = None):
     return await _ctl().download(ref=ref, selector=selector, url=url, path=path, tab=tab)
@@ -570,11 +582,37 @@ _REGISTRY = {
     "controlled": _controlled, "solve_cloudflare": _solve_cloudflare,
     "record_api": _record_api, "recipes": _recipes,
     "extract": _extract, "extract_auto": _extract_auto, "structured_data": _structured_data,
-    "pdf": _pdf, "download": _download, "upload": _upload,
+    "pdf": _pdf, "pdf_text": _pdf_text, "storage": _storage,
+    "download": _download, "upload": _upload,
     "cookies": _cookies,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]
 
+# read-only tools (no page mutation / no side effects) — annotate so MCP clients can skip
+# the per-call permission prompt and parallelize them freely.
+_READONLY = {
+    "read", "read_markdown", "snapshot", "find_links", "assets", "web_search", "scrape",
+    "extract", "extract_auto", "structured_data", "verify", "observe", "console",
+    "tabs", "recall", "recall_manual", "recipes", "stealth_audit", "bridge_status",
+    "mode", "cache", "cookies", "storage", "pdf_text", "wait_for_ref", "last_dialog",
+    "eval",
+}
+
+def _annotations(name):
+    ann = {"title": name}
+    if name in _READONLY:
+        ann["readOnlyHint"] = True
+    else:
+        ann["readOnlyHint"] = False
+        ann["destructiveHint"] = name in {"close_tab", "forget", "forget_manual", "upload"}
+    return ann
+
 for _name, _fn in _REGISTRY.items():
-    mcp.tool(name=_name)(_fn)
-mcp.tool(name="screenshot")(_screenshot_impl)
+    try:
+        mcp.tool(name=_name, annotations=_annotations(_name))(_fn)
+    except TypeError:
+        mcp.tool(name=_name)(_fn)   # older FastMCP without annotations support
+try:
+    mcp.tool(name="screenshot", annotations={"title": "screenshot", "readOnlyHint": True})(_screenshot_impl)
+except TypeError:
+    mcp.tool(name="screenshot")(_screenshot_impl)

@@ -867,6 +867,58 @@ class BrowserController:
             await page.pdf(path=path)   # fallback (headless chromium)
         return {"pdf": path}
 
+    async def pdf_text(self, url=None, max_pages=50, tab=None):
+        """Extract TEXT (not an image) from a PDF — for reading filings/reports. Downloads the
+        PDF (url, or the current page if it is a PDF) and pulls text with pypdf. Returns
+        {pages, text, chars}. (Scanned/image PDFs need OCR, not bundled here.)"""
+        import io
+        if not url:
+            url = (await self.current_page(tab)).url
+        data = None
+        # try the page's own cookies via a context request first (authed PDFs), else plain GET
+        try:
+            req = await self._ctx.request.get(url) if self._ctx else None
+            if req and req.ok:
+                data = await req.body()
+        except Exception:
+            data = None
+        if data is None:
+            import urllib.request
+            data = await asyncio.to_thread(lambda: urllib.request.urlopen(url, timeout=30).read())
+        try:
+            from pypdf import PdfReader
+        except Exception:
+            raise RoamError("PDF_DEP_MISSING", "pypdf not installed", "pip install pypdf")
+        reader = PdfReader(io.BytesIO(data))
+        n = min(len(reader.pages), max_pages)
+        parts = []
+        for i in range(n):
+            try:
+                parts.append(reader.pages[i].extract_text() or "")
+            except Exception:
+                parts.append("")
+        text = "\n\n".join(parts).strip()
+        return {"pages": n, "total_pages": len(reader.pages), "chars": len(text), "text": text}
+
+    async def storage(self, action="get", which="local", key=None, value=None, tab=None):
+        """Read/write web storage. which = local | session; action = get | set | clear.
+        get with no key dumps all keys. The agent's persistence primitive (save/replay auth
+        without an eval round-trip)."""
+        page = await self.current_page(tab)
+        store = "localStorage" if which == "local" else "sessionStorage"
+        if action == "clear":
+            await page.evaluate(f"() => {store}.clear()")
+            return {"cleared": which}
+        if action == "set":
+            await page.evaluate(f"([k,v]) => {store}.setItem(k,v)", [key, value])
+            return {"set": key}
+        if key is not None:
+            v = await page.evaluate(f"(k) => {store}.getItem(k)", key)
+            return {"key": key, "value": v}
+        allkv = await page.evaluate(
+            f"() => {{ const o={{}}; for (let i=0;i<{store}.length;i++){{const k={store}.key(i);o[k]={store}.getItem(k);}} return o; }}")
+        return {which: allkv}
+
     async def download(self, ref=None, selector=None, url=None, path=None, tab=None):
         page = await self.current_page(tab)
         async with page.expect_download() as dl_info:
