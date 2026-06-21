@@ -62,6 +62,7 @@ class BrowserController:
         self._tab_seq = 0
         self._refs = set()       # refs valid in the latest snapshot
         self._frames = {}        # ref-prefix (fN-) -> same-origin Frame for the latest snapshot
+        self._last_dialog = None  # most recent native dialog (alert/confirm/prompt) seen
         self.console_buf = deque(maxlen=500)
         self.memory = SelectorMemory(
             os.path.join(os.path.dirname(cfg.profile_dir) or ".", "memory.db"))
@@ -224,7 +225,20 @@ class BrowserController:
         self.active = tid
         page.on("console", lambda m: self.console_buf.append((m.type, m.text)))
         page.on("close", lambda: self.pages.pop(tid, None))
+        # native dialogs (alert/confirm/prompt) block JS until handled — auto-accept and
+        # record so the action doesn't hang and the agent can SEE what popped up.
+        page.on("dialog", lambda d: asyncio.create_task(self._on_dialog(d)))
         return tid
+
+    async def _on_dialog(self, dialog):
+        self._last_dialog = {"type": dialog.type, "message": dialog.message}
+        try:
+            await dialog.accept()
+        except Exception:
+            try:
+                await dialog.dismiss()
+            except Exception:
+                pass
 
     def _ctx_alive(self):
         """True only if the context still has a live, connected browser behind it."""
@@ -437,6 +451,56 @@ class BrowserController:
             return loc.first
         return None
 
+    async def wait_for_ref(self, ref=None, selector=None, state="visible", timeout=None, tab=None):
+        """Wait until an element reaches an actionability state before you act on it:
+        state = visible | hidden | attached | detached | enabled | editable | stable.
+        Returns {ok, state}. Lets the agent gate a click on 'the spinner is gone' /
+        'the button is enabled' instead of blind-retrying the whole action."""
+        page = await self.current_page(tab)
+        if ref is not None:
+            loc = page.locator(f'[data-roam-ref="{ref}"]')
+        elif selector is not None:
+            loc = page.locator(selector).first
+        else:
+            raise RoamError("BAD_ARGS", "wait_for_ref needs ref or selector", "")
+        ms = timeout if timeout is not None else self.cfg.default_timeout_ms
+        try:
+            if state in ("visible", "hidden", "attached", "detached"):
+                await loc.wait_for(state=state, timeout=ms)
+            elif state == "enabled":
+                await loc.wait_for(state="visible", timeout=ms)
+                # poll enabled within the budget
+                import time as _t
+                t0 = _t.time()
+                while (_t.time() - t0) * 1000 < ms:
+                    if await loc.is_enabled():
+                        break
+                    await page.wait_for_timeout(100)
+                else:
+                    return {"ok": False, "state": state}
+            elif state == "editable":
+                await loc.wait_for(state="visible", timeout=ms)
+                if not await loc.is_editable():
+                    return {"ok": False, "state": state}
+            elif state == "stable":
+                # two consecutive equal bounding boxes ~ animation settled
+                await loc.wait_for(state="visible", timeout=ms)
+                b1 = await loc.bounding_box()
+                await page.wait_for_timeout(120)
+                b2 = await loc.bounding_box()
+                return {"ok": b1 == b2, "state": state}
+            else:
+                raise RoamError("BAD_ARGS", f"unknown state {state}",
+                                "state: visible|hidden|attached|detached|enabled|editable|stable")
+            return {"ok": True, "state": state}
+        except PWTimeout:
+            return {"ok": False, "state": state, "timed_out": True}
+
+    async def last_dialog(self, tab=None):
+        """Return the most recent native dialog (alert/confirm/prompt) Roam auto-handled,
+        or None. Use after a click that 'did nothing' — it may have been a confirm()."""
+        return self._last_dialog
+
     async def _remember(self, loc):
         """Best-effort: record a durable selector + a structural fingerprint for a
         successfully-acted element (the fingerprint powers self-healing later)."""
@@ -544,7 +608,7 @@ class BrowserController:
         self._cursor = await human_click(page, x, y, start=self._cursor, button=button)
 
     async def click(self, element=None, ref=None, selector=None, x=None, y=None,
-                    button="left", count=1, tab=None):
+                    button="left", count=1, tab=None, timeout=None):
         page = await self.current_page(tab)
         human = self.cfg.humanize and count == 1
         if x is not None and y is not None:
@@ -565,11 +629,20 @@ class BrowserController:
             except Exception:
                 pass
             box = await loc.bounding_box()
-        if box:   # humanized path: move the real cursor to the element center and click
-            await self._human_click_xy(page, box["x"] + box["width"] / 2,
-                                       box["y"] + box["height"] / 2, button)
-        else:
-            await loc.click(button=button, click_count=count)
+        kw = {"button": button, "click_count": count}
+        if timeout is not None:
+            kw["timeout"] = timeout
+        try:
+            if box:   # humanized path: move the real cursor to the element center and click
+                await self._human_click_xy(page, box["x"] + box["width"] / 2,
+                                           box["y"] + box["height"] / 2, button)
+            else:
+                await loc.click(**kw)
+        except PWTimeout as e:
+            # surface what was blocking, so the agent can recover instead of guessing
+            raise RoamError("NOT_ACTIONABLE", str(e),
+                            "element not clickable in time (covered/disabled/animating?); "
+                            "try dismiss_popups, scroll, or raise timeout")
         await self._remember(loc)
         return {"clicked": element or ref or selector}
 

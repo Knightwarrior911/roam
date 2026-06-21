@@ -156,7 +156,7 @@ class BridgeBrowser:
         return r["outline"]
 
     async def click(self, element=None, ref=None, selector=None, x=None, y=None,
-                    button="left", count=1, tab=None):
+                    button="left", count=1, tab=None, timeout=None):
         return await self.bridge.call("click", self._t({"ref": ref, "selector": selector}, tab))
 
     async def type_text(self, element=None, ref=None, selector=None, text="", submit=False, tab=None):
@@ -275,6 +275,29 @@ class BridgeBrowser:
     async def wait(self, for_, value=None, timeout=None, tab=None):
         return await self.bridge.call("wait", self._t({"for": for_, "value": value,
                                                        "timeout": timeout}, tab), timeout=(timeout or 15000) / 1000 + 10)
+
+    async def wait_for_ref(self, ref=None, selector=None, state="visible", timeout=None, tab=None):
+        sel = selector or (f'[data-roam-ref="{ref}"]' if ref else None)
+        if not sel:
+            raise BridgeError("wait_for_ref needs ref or selector")
+        ms = timeout if timeout is not None else 15000
+        js = (
+            "(() => new Promise(res => { const t0=Date.now(); const sel=" + repr(sel) + ";"
+            " const st=" + repr(state) + "; const ms=" + str(int(ms)) + ";"
+            " const ok=(el)=>{ if(!el) return st==='detached'||st==='hidden';"
+            "   const vis = el.getClientRects().length>0 || el.offsetParent!==null;"
+            "   if(st==='visible') return vis; if(st==='hidden') return !vis;"
+            "   if(st==='attached') return true; if(st==='detached') return false;"
+            "   if(st==='enabled') return vis && !el.disabled; if(st==='editable') return vis && !el.disabled && !el.readOnly;"
+            "   return vis; };"
+            " const chk=()=>{ const el=document.querySelector(sel); if(ok(el)) return res({ok:true,state:st});"
+            "   if(Date.now()-t0>ms) return res({ok:false,state:st,timed_out:true}); setTimeout(chk,100); }; chk(); }))()"
+        )
+        return await self.eval_js(js, tab=tab)
+
+    async def last_dialog(self, tab=None):
+        # the extension auto-handles dialogs at the page level; no buffer over the bridge yet
+        return None
 
     async def cdp(self, method, params=None, tab=None):
         return (await self.bridge.call("cdp", self._t({"cdpMethod": method, "cdpParams": params or {}}, tab)))["result"]

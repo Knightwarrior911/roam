@@ -178,11 +178,13 @@ async def _snapshot(interactive_only: bool = True, selector: str | None = None, 
 @tool
 async def _click(element: str = "", ref: str | None = None, selector: str | None = None,
                  x: float | None = None, y: float | None = None,
-                 button: str = "left", count: int = 1, tab: int | None = None):
+                 button: str = "left", count: int = 1, tab: int | None = None,
+                 timeout: int | None = None):
     """Click an element. Easiest: describe it — click(element="Sign in") — and roam resolves
     it via selector memory + self-healing. Or pass a ref from snapshot(), a CSS selector, or
-    x/y. No brittle hand-written selectors needed."""
-    return await _ctl().click(element, ref, selector, x, y, button, count, tab=tab)
+    x/y. No brittle hand-written selectors needed. timeout=ms bounds the actionability wait;
+    on timeout you get NOT_ACTIONABLE with a hint instead of a silent miss."""
+    return await _ctl().click(element, ref, selector, x, y, button, count, tab=tab, timeout=timeout)
 @tool
 async def _type(element: str = "", ref: str | None = None, selector: str | None = None,
                 text: str = "", submit: bool = False, tab: int | None = None):
@@ -285,6 +287,19 @@ async def _console(level: str | None = None, tail: int = 50, tab: int | None = N
 @tool
 async def _wait(for_: str, value: str | None = None, timeout: int | None = None, tab: int | None = None):
     return await _ctl().wait(for_, value, timeout, tab=tab)
+@tool
+async def _wait_for_ref(ref: str | None = None, selector: str | None = None,
+                        state: str = "visible", timeout: int | None = None, tab: int | None = None):
+    """Wait until an element is actionable before acting: state = visible | hidden | attached |
+    detached | enabled | editable | stable. Returns {ok, state}. Gate a click on 'spinner
+    gone' / 'button enabled' instead of blind-retrying the whole action."""
+    return await _ctl().wait_for_ref(ref=ref, selector=selector, state=state,
+                                     timeout=timeout, tab=tab)
+@tool
+async def _last_dialog(tab: int | None = None):
+    """The most recent native dialog (alert/confirm/prompt) Roam auto-accepted, or null.
+    Check this when a click 'did nothing' — it may have triggered a confirm()."""
+    return {"dialog": await _ctl().last_dialog(tab=tab)}
 @tool
 async def _tabs(): return await _ctl().tabs()
 @tool
@@ -472,7 +487,8 @@ _REGISTRY = {
     "snapshot": _snapshot, "click": _click, "type": _type, "press": _press,
     "select": _select, "hover": _hover, "scroll": _scroll, "read": _read, "eval": _eval,
     "verify": _verify,
-    "console": _console, "wait": _wait, "tabs": _tabs, "new_tab": _new_tab,
+    "console": _console, "wait": _wait, "wait_for_ref": _wait_for_ref,
+    "last_dialog": _last_dialog, "tabs": _tabs, "new_tab": _new_tab,
     "switch_tab": _switch_tab, "close_tab": _close_tab, "cdp": _cdp,
     "recall": _recall, "forget": _forget, "bypass": _bypass,
     "import_cookies": _import_cookies, "bridge": _bridge, "bridge_status": _bridge_status,
