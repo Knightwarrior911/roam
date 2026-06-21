@@ -181,8 +181,10 @@ function SNAPSHOT_FN(interactiveOnly) {
   const name = el => (el.getAttribute('aria-label')||el.getAttribute('placeholder')||el.getAttribute('alt')||(el.value&&el.type!=='password'?el.value:'')||(el.innerText||el.textContent||'').trim()).replace(/\s+/g,' ').slice(0,120);
   const vh = window.innerHeight || 0;
   const viewOf = (el) => { const r = el.getBoundingClientRect(); return r.bottom < 0 ? ' (above)' : (r.top > vh ? ' (below)' : ''); };
+  // fixed/sticky elements have offsetParent===null but are visible — include them.
+  const isVis = (el) => { if (el.tagName==='OPTION') return true; if (el.offsetParent !== null) return true; if (el.getClientRects().length > 0) return true; const p = getComputedStyle(el).position; return p==='fixed' || p==='sticky'; };
   const out = []; let n = 0;
-  (function walk(el){ for (const c of el.children){ const vis = c.offsetParent !== null || c.tagName==='OPTION'; if (vis && (!interactiveOnly || isI(c))){ n++; const r='e'+n; c.setAttribute('data-roam-ref',r); out.push('- '+role(c)+(name(c)?' "'+name(c)+'"':'')+viewOf(c)+' [ref='+r+']'); } walk(c);} })(document.body);
+  (function walk(el){ for (const c of el.children){ const vis = isVis(c); if (vis && (!interactiveOnly || isI(c))){ n++; const r='e'+n; c.setAttribute('data-roam-ref',r); out.push('- '+role(c)+(name(c)?' "'+name(c)+'"':'')+viewOf(c)+' [ref='+r+']'); } walk(c);} })(document.body);
   return out.join('\n') || '(no elements)';
 }
 function CLEAN_FN(selector) {
@@ -235,7 +237,8 @@ function RELOCATE_FN(fp) {
 function DISMISS_FN() {
   const clicked = [];
   const known = ['#onetrust-accept-btn-handler','#onetrust-reject-all-handler','#truste-consent-button','#hs-eu-confirmation-button','.cc-allow','.cc-dismiss','#CybotCookiebotDialogBodyButtonAccept','.fc-button.fc-cta-consent','[aria-label="Accept all"]','[aria-label="Close"]','[title="Close"]'];
-  for (const sel of known) { try { const el = document.querySelector(sel); if (el && el.offsetParent !== null) { el.click(); clicked.push(sel); } } catch (e) {} }
+  const shown = (el) => el && (el.offsetParent !== null || el.getClientRects().length > 0);
+  for (const sel of known) { try { const el = document.querySelector(sel); if (shown(el)) { el.click(); clicked.push(sel); } } catch (e) {} }
   const re = /^(accept|accept all|accept cookies|agree|i agree|got it|i understand|ok|okay|continue|close|dismiss|no thanks|reject all|allow all|x)$/i;
   document.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]').forEach(b => { const t = (b.innerText || b.value || b.getAttribute('aria-label') || '').trim(); if (re.test(t)) { try { b.click(); clicked.push(t); } catch (e) {} } });
   let removed = 0;
@@ -324,9 +327,52 @@ async function handleCommand(msg) {
       case "reload": { await chrome.tabs.reload(tid); await waitComplete(tid); return reply({ ok: true }); }
       case "snapshot": return reply({ tabId: tid, outline: await inject(tid, SNAPSHOT_FN, !!(p.interactive_only ?? true)) });
       case "eval": return reply({ value: await inject(tid, (js) => { try { return eval(js); } catch (e) { return String(e); } }, p.js) });
-      case "text": return reply({ text: await inject(tid, (sel) => (sel ? (document.querySelector(sel)||{}).innerText : document.body.innerText) || "", p.selector || null) });
+      case "text": return reply({ text: await inject(tid, (sel) => {
+        // descend into open shadow roots and same-origin iframes so SaaS apps (Notion,
+        // Stripe checkout, Lit components) don't return "" / host-only text.
+        const el = sel ? document.querySelector(sel) : null;
+        if (sel && !el) return "";
+        let txt = el ? (el.innerText || el.textContent || '') : (document.body.innerText || '');
+        try {
+          const nodes = (el || document).querySelectorAll('*');
+          for (const n of nodes) {
+            if (n.shadowRoot) { try { const b = n.shadowRoot; const t = (b.body ? b.body.innerText : b.textContent) || ''; if (t.trim()) txt += '\n' + t; } catch (e) {} }
+            if (n.tagName === 'IFRAME' || n.tagName === 'FRAME') { try { const d = n.contentDocument; if (d && d.body) txt += '\n' + d.body.innerText; } catch (e) {} }
+          }
+        } catch (e) {}
+        return txt || "";
+      }, p.selector || null) });
       case "click": return reply({ ok: await inject(tid, (ref, sel) => { const el = ref ? document.querySelector('[data-roam-ref="'+ref+'"]') : document.querySelector(sel); if (!el) return false; el.scrollIntoView({block:'center'}); el.click(); return true; }, p.ref || null, p.selector || null) });
-      case "type": return reply({ ok: await inject(tid, (ref, sel, text, submit) => { const el = ref ? document.querySelector('[data-roam-ref="'+ref+'"]') : document.querySelector(sel); if (!el) return false; el.focus(); el.value = text; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); if (submit && el.form && el.form.requestSubmit) el.form.requestSubmit(); return true; }, p.ref || null, p.selector || null, p.text || "", !!p.submit) });
+      case "type": return reply({ ok: await inject(tid, (ref, sel, text, submit) => {
+        const el = ref ? document.querySelector('[data-roam-ref="'+ref+'"]') : document.querySelector(sel);
+        if (!el) return false;
+        el.focus();
+        const tag = el.tagName;
+        if (el.isContentEditable) {
+          // rich-text editors (Notion/Gmail/Slate/ProseMirror/Lexical) ignore .value;
+          // execCommand insertText fires the proper InputEvent the editor listens for.
+          let okEC = false;
+          try { okEC = document.execCommand('insertText', false, text); } catch (e) {}
+          if (!okEC) { el.textContent = text; el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' })); }
+        } else if (tag === 'INPUT' || tag === 'TEXTAREA') {
+          // use the prototype value setter so React's valueTracker / Vue v-model see the
+          // change (plain el.value= is silently reverted on the next render).
+          const proto = tag === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value') && Object.getOwnPropertyDescriptor(proto, 'value').set;
+          if (setter) setter.call(el, text); else el.value = text;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        } else {
+          el.value = text;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        if (submit) {
+          if (el.form && el.form.requestSubmit) el.form.requestSubmit();
+          else el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', code: 'Enter', keyCode: 13 }));
+        }
+        return true;
+      }, p.ref || null, p.selector || null, p.text || "", !!p.submit) });
       case "select": return reply({ ok: await inject(tid, (ref, sel, values) => { const el = ref ? document.querySelector('[data-roam-ref="'+ref+'"]') : document.querySelector(sel); if (!el) return false; const want = [].concat(values); for (const o of el.options) o.selected = want.includes(o.value) || want.includes(o.text); el.dispatchEvent(new Event('change',{bubbles:true})); return true; }, p.ref || null, p.selector || null, p.values || []) });
       case "hover": return reply({ ok: await inject(tid, (ref, sel) => { const el = ref ? document.querySelector('[data-roam-ref="'+ref+'"]') : document.querySelector(sel); if (!el) return false; const r = el.getBoundingClientRect(); ['mouseover','mouseenter','mousemove'].forEach(t => el.dispatchEvent(new MouseEvent(t,{bubbles:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2}))); return true; }, p.ref || null, p.selector || null) });
       case "press": return reply({ ok: await inject(tid, (key) => { const el = document.activeElement || document.body; ['keydown','keypress','keyup'].forEach(t => el.dispatchEvent(new KeyboardEvent(t,{bubbles:true,key}))); return true; }, p.key || "Enter") });

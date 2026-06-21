@@ -37,11 +37,21 @@ SNAPSHOT_JS = r"""
     if (r.top > vh) return 'below';
     return 'in';
   };
+  // offsetParent is null for position:fixed AND for sticky-in-some-cases, so fixed headers,
+  // modals, cookie bars, sticky toolbars (every modern web app) would be invisible. Use
+  // getClientRects()/computed position so they are seen. (matches Playwright's isVisible.)
+  const isVisible = (el) => {
+    if (el.tagName === 'OPTION') return true;
+    if (el.offsetParent !== null) return true;
+    if (el.getClientRects().length > 0) return true;
+    const pos = getComputedStyle(el).position;
+    return pos === 'fixed' || pos === 'sticky';
+  };
   const out = [];
   let n = 0;
   const walk = (el) => {
     for (const child of el.children) {
-      const vis = child.offsetParent !== null || child.tagName === 'OPTION';
+      const vis = isVisible(child);
       if (vis && (!interactiveOnly || isInteractive(child))) {
         n += 1;
         const ref = 'e' + n;

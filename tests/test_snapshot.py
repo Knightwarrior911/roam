@@ -24,6 +24,13 @@ async def test_snapshot_marks_offscreen_elements(ctl):
     assert "(below)" in out
 
 
+async def test_snapshot_includes_fixed_position_element(ctl):
+    # position:fixed elements have offsetParent===null; the old check excluded them,
+    # making fixed headers / modals / cookie bars invisible to the agent.
+    out = await ctl.snapshot()
+    assert "FixedClose" in out
+
+
 async def test_stale_ref_raises(ctl):
     await ctl.snapshot()
     with pytest.raises(RoamError) as ei:

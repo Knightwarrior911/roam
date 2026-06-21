@@ -14,8 +14,9 @@ DISMISS_JS = r"""
     '.fc-button.fc-cta-consent', '[data-testid*="accept" i]', '[aria-label="Accept all"]',
     '[aria-label="Close"]', '[title="Close"]', 'button[mode="primary"]'
   ];
+  const shown = (el) => el && (el.offsetParent !== null || el.getClientRects().length > 0);
   for (const sel of known) {
-    try { const el = document.querySelector(sel); if (el && el.offsetParent !== null) { el.click(); clicked.push(sel); } } catch (e) {}
+    try { const el = document.querySelector(sel); if (shown(el)) { el.click(); clicked.push(sel); } } catch (e) {}
   }
   // 2. any button/link whose label is a consent/close affordance
   const re = /^(accept|accept all|accept cookies|agree|i agree|got it|i understand|ok|okay|continue|close|dismiss|no thanks|reject all|allow all|that.?s ok|x)$/i;
