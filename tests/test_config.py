@@ -6,7 +6,7 @@ def test_defaults_when_no_file(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     cfg = load_config()
     assert cfg.headless is False
-    assert cfg.channel == "chrome"
+    assert cfg.channel == "auto"   # resolved to chrome/msedge/chromium at launch
     assert cfg.default_timeout_ms == 15000
     assert cfg.viewport == {"width": 1280, "height": 800}
     assert cfg.profile_dir.endswith("profile")

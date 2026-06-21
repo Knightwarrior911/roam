@@ -9,10 +9,38 @@ def _home() -> Path:
     return Path(base) / "Roam"
 
 
+def detect_default_browser() -> str:
+    """Pick a sensible managed-browser channel for THIS machine instead of hardcoding
+    'chrome'. Prefer Chrome when present, else Edge (the Windows default), else fall back
+    to Playwright's bundled Chromium. Keeps Edge-primary boxes from hitting a
+    CHROME_LAUNCH_FAILED cliff on first run."""
+    pf = os.environ.get("PROGRAMFILES", "")
+    pf86 = os.environ.get("PROGRAMFILES(X86)", "")
+    local = os.environ.get("LOCALAPPDATA", "")
+    chrome = [
+        os.path.join(pf, "Google", "Chrome", "Application", "chrome.exe"),
+        os.path.join(pf86, "Google", "Chrome", "Application", "chrome.exe"),
+        os.path.join(local, "Google", "Chrome", "Application", "chrome.exe"),
+    ]
+    edge = [
+        os.path.join(pf, "Microsoft", "Edge", "Application", "msedge.exe"),
+        os.path.join(pf86, "Microsoft", "Edge", "Application", "msedge.exe"),
+    ]
+    if any(c and os.path.exists(c) for c in chrome):
+        return "chrome"
+    if any(e and os.path.exists(e) for e in edge):
+        return "msedge"
+    return "chromium"
+
+
 @dataclass
 class Config:
     headless: bool = False
-    channel: str | None = "chrome"
+    # "auto" = pick at launch (chrome -> msedge -> chromium). "chrome"/"msedge"/"chromium"
+    # pin it. None = Playwright bundled chromium (tests use this).
+    channel: str | None = "auto"
+    mode_default: str = "auto"   # session backend when unset: "auto" | "bridge" | "managed"
+    bridge_auto: bool = True     # auto-start the bridge listener at server boot
     profile_dir: str = ""
     default_timeout_ms: int = 15000
     viewport: dict = field(default_factory=lambda: {"width": 1280, "height": 800})
@@ -34,7 +62,8 @@ def load_config() -> Config:
     f = home / "config.json"
     if f.exists():
         data = json.loads(f.read_text(encoding="utf-8"))
-        for k in ("headless", "channel", "profile_dir", "default_timeout_ms",
+        for k in ("headless", "channel", "mode_default", "bridge_auto",
+                  "profile_dir", "default_timeout_ms",
                   "viewport", "mode", "executable_path", "extensions", "stealth_harden",
                   "humanize", "canvas_noise", "block_webrtc",
                   "bypass", "bypass_rules_dir", "bypass_clear_cookies"):

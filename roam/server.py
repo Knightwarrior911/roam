@@ -1,6 +1,7 @@
 import functools
 import os
 from mcp.server.fastmcp import FastMCP, Image
+from . import mode
 from .browser import BrowserController
 from .config import load_config
 from .errors import RoamError, ok, err
@@ -26,6 +27,17 @@ Typical flows:
 - Read a page:        read_markdown(url="https://…")
 - Search then read:   web_search(query=…) → read_markdown(url=<result link>)
 - Act on a page:      snapshot()  →  click(element="…") / type(element="…", text="…", submit=True)
+
+Drive YOUR real, logged-in browser (the bridge):
+- Call bridge(enable=True) ONCE. It block-waits for the Roam Bridge extension to AUTO-connect
+  — there is NO manual "click to connect" step; the extension connects on its own. You get
+  back connected:true (with the browser identity) or an honest connected:false + install hint.
+- Then set_mode("bridge") to pin every tool to your real browser. In bridge mode, if the
+  extension drops, calls fail with BRIDGE_DISCONNECTED instead of silently opening another
+  browser. set_mode("auto") falls back to the managed browser when the bridge is down;
+  set_mode("managed") forces Roam's own browser.
+- mode() shows which backend the next call hits. set_channel("msedge"|"chrome"|"chromium")
+  picks the managed engine (Edge is auto-detected when Chrome is absent).
 
 Every tool returns {ok, data} on success or {ok:false, error:{code, message, hint}} on failure —
 never a raw traceback, so failures are actionable."""
@@ -61,20 +73,68 @@ async def _nav_if(url, tab, wait="load"):
         await _ctl().goto(url, wait, tab=tab)
 
 
-def _ctl():
-    # when the browser extension is connected, drive the user's real browser
-    if _bridge_browser is not None and _bridge_srv is not None and _bridge_srv.connected.is_set():
-        return _bridge_browser
+def _bridge_ready():
+    return (_bridge_browser is not None and _bridge_srv is not None
+            and _bridge_srv.connected.is_set())
+
+
+def _managed():
     global _controller
     if _controller is None:
         _controller = BrowserController(load_config())
     return _controller
 
 
+def _ctl():
+    """Pick the backend for this call based on the sticky session mode.
+    - bridge:  always the extension; if not connected, fail LOUD (no silent Chrome).
+    - managed: always the Playwright browser.
+    - auto:    bridge if connected, else managed (historical behavior).
+    """
+    m = mode.get(load_config().mode_default)
+    if m == "bridge":
+        if _bridge_ready():
+            return _bridge_browser
+        raise RoamError(
+            "BRIDGE_DISCONNECTED",
+            "mode is 'bridge' but the Roam Bridge extension is not connected",
+            "call bridge(enable=True) and ensure the extension is loaded + enabled in your "
+            "browser (chrome://extensions or edge://extensions); or call set_mode('auto') "
+            "to fall back to the managed browser")
+    if m == "managed":
+        return _managed()
+    # auto
+    return _bridge_browser if _bridge_ready() else _managed()
+
+
+_autostart_done = False
+
+
+async def _maybe_autostart_bridge():
+    """Start the bridge WS listener once at first tool use (config.bridge_auto). This way the
+    moment the user has the extension loaded, the bridge is the default backend in auto mode —
+    no explicit bridge() call needed. Idempotent and best-effort (never blocks tools)."""
+    global _autostart_done, _bridge_srv, _bridge_browser
+    if _autostart_done:
+        return
+    _autostart_done = True
+    try:
+        cfg = load_config()
+        if cfg.bridge_auto and _bridge_srv is None:
+            from .bridge import Bridge, BridgeBrowser
+            _bridge_srv = Bridge(8777)
+            await _bridge_srv.start()
+            _bridge_browser = BridgeBrowser(_bridge_srv)
+    except Exception:
+        # port busy / websockets missing: fall back silently to managed; bridge() still works
+        pass
+
+
 def tool(coro):
     """Wrap a controller call: return ok(data) or err(RoamError)."""
     @functools.wraps(coro)
     async def inner(*a, **k):
+        await _maybe_autostart_bridge()
         try:
             return ok(await coro(*a, **k))
         except RoamError as e:
@@ -291,7 +351,16 @@ async def _bypass(enable: bool = True, rules_dir: str | None = None):
 async def _import_cookies(domain: str, source: str = "edge"):
     return await _ctl().import_cookies(domain, source)
 @tool
-async def _bridge(enable: bool = True, port: int = 8777):
+async def _bridge(enable: bool = True, port: int = 8777, wait: bool = True, timeout: int = 15):
+    """Drive your real, logged-in browser via the Roam Bridge extension.
+
+    Call once with enable=True. It starts the local WebSocket and (by default) block-waits
+    up to `timeout`s for the extension to AUTO-connect — there is NO manual "click to
+    connect" step; the extension connects on its own as soon as it's loaded + enabled.
+    Returns connected:true with the browser identity on success, or connected:false with an
+    honest hint (install/enable the extension once at chrome://extensions or
+    edge://extensions) on timeout. Pass wait=False for a non-blocking start.
+    Once connected, set_mode('bridge') makes every tool target your real browser."""
     global _bridge_srv, _bridge_browser
     from .bridge import Bridge, BridgeBrowser
     if enable:
@@ -299,9 +368,18 @@ async def _bridge(enable: bool = True, port: int = 8777):
             _bridge_srv = Bridge(port)
             await _bridge_srv.start()
             _bridge_browser = BridgeBrowser(_bridge_srv)
-        return {"bridge": "listening", "port": port,
-                "connected": _bridge_srv.connected.is_set(),
-                "hint": "load the Roam Bridge extension in your browser; tools then drive it"}
+        connected = _bridge_srv.connected.is_set()
+        if wait and not connected:
+            connected = await _bridge_srv.wait_ready(timeout)
+        if connected:
+            return {"bridge": "connected", "port": port, "connected": True,
+                    "browser": _bridge_srv.hello,
+                    "hint": "bridge is live; call set_mode('bridge') to pin all tools to your real browser"}
+        return {"bridge": "listening", "port": port, "connected": False,
+                "waited_s": timeout if wait else 0,
+                "hint": "the extension auto-connects with NO manual click — if still "
+                        "disconnected, load/enable the Roam Bridge extension once at "
+                        "chrome://extensions (or edge://extensions), then call bridge() again"}
     if _bridge_srv is not None:
         await _bridge_srv.stop()
         _bridge_srv = None
@@ -312,6 +390,49 @@ async def _bridge_status():
     return {"listening": _bridge_srv is not None,
             "connected": bool(_bridge_srv and _bridge_srv.connected.is_set()),
             "browser": (_bridge_srv.hello if _bridge_srv else None)}
+@tool
+async def _set_mode(mode_name: str = "auto"):
+    """Pin which browser every tool drives for this session: 'bridge' (your real browser via
+    the extension — fails loud if not connected, never silently opens a different browser),
+    'managed' (Roam's own Playwright browser), or 'auto' (bridge if connected, else managed).
+    Sticky until changed."""
+    m = mode.set_mode(mode_name)
+    return {"mode": m, "bridge_connected": _bridge_ready()}
+@tool
+async def _mode():
+    """Report the active backend: explicit session mode, what the next call will actually
+    hit, the managed browser channel/headless, and whether the bridge is connected."""
+    cfg = load_config()
+    explicit = mode.get(cfg.mode_default)
+    effective = ("bridge" if (explicit in ("bridge", "auto") and _bridge_ready())
+                 else ("bridge" if explicit == "bridge" else "managed"))
+    ch = None
+    try:
+        ch = _managed()._resolve_channel() if effective == "managed" else None
+    except Exception:
+        pass
+    return {"explicit": explicit, "effective": effective,
+            "bridge_connected": _bridge_ready(),
+            "channel": ch or ("real browser" if effective == "bridge" else "chromium"),
+            "headless": cfg.headless,
+            "browser": (_bridge_srv.hello if (_bridge_srv and effective == "bridge") else None)}
+@tool
+async def _set_channel(channel: str = "auto", headless: bool = False):
+    """Set the MANAGED browser engine: 'chrome', 'msedge' (Edge), 'chromium' (bundled), or
+    'auto' (detect). Relaunches the managed browser so the change takes effect. Does not
+    affect bridge mode (that's always your real browser)."""
+    global _controller
+    cfg = load_config()
+    cfg.channel = channel
+    cfg.headless = headless
+    if _controller is not None:
+        try:
+            await _controller.close()
+        except Exception:
+            pass
+    _controller = BrowserController(cfg)
+    return {"channel": channel, "headless": headless,
+            "resolved": _controller._resolve_channel() or "chromium"}
 
 
 # ---- screenshot is special: returns an inline image to the agent ----
@@ -332,6 +453,7 @@ _REGISTRY = {
     "switch_tab": _switch_tab, "close_tab": _close_tab, "cdp": _cdp,
     "recall": _recall, "forget": _forget, "bypass": _bypass,
     "import_cookies": _import_cookies, "bridge": _bridge, "bridge_status": _bridge_status,
+    "set_mode": _set_mode, "mode": _mode, "set_channel": _set_channel,
     "save_manual": _save_manual, "recall_manual": _recall_manual, "forget_manual": _forget_manual,
     "stealth_audit": _stealth_audit, "read_markdown": _read_markdown, "heal": _heal,
     "dismiss_popups": _dismiss_popups, "find_links": _find_links, "web_search": _web_search,

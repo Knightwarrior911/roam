@@ -79,6 +79,18 @@ class BrowserController:
             return self.cfg.profile_dir + "_stealth"
         return self.cfg.profile_dir
 
+    def _resolve_channel(self):
+        """Map cfg.channel to a concrete Playwright channel. 'auto' -> detect
+        chrome/msedge/chromium for this machine; None -> bundled chromium (channel
+        omitted); anything else passes through."""
+        ch = self.cfg.channel
+        if ch == "auto":
+            from .config import detect_default_browser
+            ch = detect_default_browser()
+        if ch == "chromium":
+            return None   # omit channel -> Playwright's bundled Chromium
+        return ch
+
     async def _start_playwright(self):
         if self.cfg.mode == "stealth":
             # patchright is a drop-in, Playwright-API-compatible stealth fork, so the
@@ -126,7 +138,9 @@ class BrowserController:
         if self.cfg.executable_path:
             kwargs["executable_path"] = self.cfg.executable_path
         else:
-            kwargs["channel"] = self.cfg.channel
+            ch = self._resolve_channel()
+            if ch:                       # None -> omit -> bundled chromium
+                kwargs["channel"] = ch
         try:
             self._pw = await self._start_playwright()
             self._ctx = await self._pw.chromium.launch_persistent_context(**kwargs)
@@ -141,15 +155,24 @@ class BrowserController:
     def _chrome_executable(self):
         if self.cfg.executable_path:
             return self.cfg.executable_path
-        cands = [
-            os.path.join(os.environ.get("PROGRAMFILES", ""), "Google", "Chrome", "Application", "chrome.exe"),
-            os.path.join(os.environ.get("PROGRAMFILES(X86)", ""), "Google", "Chrome", "Application", "chrome.exe"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
+        pf = os.environ.get("PROGRAMFILES", "")
+        pf86 = os.environ.get("PROGRAMFILES(X86)", "")
+        local = os.environ.get("LOCALAPPDATA", "")
+        chrome = [
+            os.path.join(pf, "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(pf86, "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(local, "Google", "Chrome", "Application", "chrome.exe"),
         ]
-        for c in cands:
+        edge = [
+            os.path.join(pf, "Microsoft", "Edge", "Application", "msedge.exe"),
+            os.path.join(pf86, "Microsoft", "Edge", "Application", "msedge.exe"),
+        ]
+        # honor an explicit channel preference; otherwise Chrome-then-Edge
+        order = (edge + chrome) if self._resolve_channel() == "msedge" else (chrome + edge)
+        for c in order:
             if c and os.path.exists(c):
                 return c
-        raise RoamError("CHROME_LAUNCH_FAILED", "chrome.exe not found",
+        raise RoamError("CHROME_LAUNCH_FAILED", "no chrome.exe or msedge.exe found",
                         "set executable_path in config")
 
     async def _launch_attached(self):

@@ -24,8 +24,10 @@ class Bridge:
         self._conn = None          # the live extension websocket
         self._pending = {}         # request id -> Future
         self._ids = itertools.count(1)
-        self.connected = asyncio.Event()
+        self.connected = asyncio.Event()   # set ONLY after the extension's 'hello'
+        self.attached = asyncio.Event()    # set as soon as a socket is accepted
         self.hello = None
+        self._gen = 0              # connection generation (newest-wins bookkeeping)
 
     async def start(self):
         if websockets is None:
@@ -42,7 +44,19 @@ class Bridge:
             self._server = None
 
     async def _handler(self, ws, *args):   # path arg varies by websockets version
-        self._conn = ws                     # newest connection wins
+        # newest connection wins: cleanly retire the prior socket so its in-flight calls
+        # fail fast instead of orphaning in _pending until the new socket also dies.
+        prior = self._conn
+        if prior is not None and prior is not ws:
+            self._fail_pending(BridgeError("bridge connection superseded by a newer browser"))
+            try:
+                await prior.close(code=1011, reason="superseded by newer connection")
+            except Exception:
+                pass
+            self.connected.clear()
+        self._gen += 1
+        self._conn = ws
+        self.attached.set()                 # a socket exists, even before 'hello'
         try:
             async for raw in ws:
                 try:
@@ -64,17 +78,31 @@ class Bridge:
                 if fut and not fut.done():
                     fut.set_result(msg)
         finally:
-            if self._conn is ws:
+            if self._conn is ws:            # only the live socket clears shared state
                 self._conn = None
                 self.connected.clear()
-                # fail any in-flight calls so callers don't hang
-                for fut in self._pending.values():
-                    if not fut.done():
-                        fut.set_exception(BridgeError("bridge connection dropped"))
-                self._pending.clear()
+                self.attached.clear()
+                self._fail_pending(BridgeError("bridge connection dropped"))
+
+    def _fail_pending(self, exc):
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(exc)
+        self._pending.clear()
 
     async def wait_connected(self, timeout=30):
+        """Wait until the extension has sent 'hello' (i.e. it is ready to take commands)."""
         await asyncio.wait_for(self.connected.wait(), timeout)
+
+    async def wait_ready(self, timeout=15):
+        """Truthful readiness check used by the MCP bridge() tool. Returns True only when
+        the extension has connected AND said hello within `timeout`; False otherwise
+        (never raises, so the tool can report honest status)."""
+        try:
+            await asyncio.wait_for(self.connected.wait(), timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
 
     async def call(self, method, params=None, timeout=30):
         if self._conn is None:

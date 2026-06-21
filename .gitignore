@@ -21,3 +21,6 @@ memory.db
 _*.png
 *.png
 test-results/
+
+# 10x audit scratch
+_audit_*.txt
