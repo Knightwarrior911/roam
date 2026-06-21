@@ -702,6 +702,37 @@ class BrowserController:
         except Exception as e:
             raise RoamError("EVAL_ERROR", str(e), "")
 
+    # ---- assertions (so an agent can CHECK a result instead of re-snapshotting) ----
+    async def verify(self, text=None, selector=None, value=None, visible=None, tab=None):
+        """Assert a condition on the page. Returns {ok: bool, ...}. Modes:
+        - text=…           : that text is present in the page body
+        - selector=…       : that selector matches at least one element (visible=True checks visibility)
+        - selector=…, value=… : that input/element's value/text equals/contains `value`
+        """
+        page = await self.current_page(tab)
+        if text is not None and selector is None:
+            body = await page.locator("body").inner_text()
+            present = text in body
+            return {"ok": present, "verified": "text", "text": text, "present": present}
+        if selector is not None:
+            loc = page.locator(selector)
+            cnt = await loc.count()
+            if cnt == 0:
+                return {"ok": False, "verified": "selector", "selector": selector, "found": False}
+            if value is not None:
+                try:
+                    actual = await loc.first.input_value()
+                except Exception:
+                    actual = await loc.first.inner_text()
+                match = value == actual or value in (actual or "")
+                return {"ok": match, "verified": "value", "selector": selector,
+                        "expected": value, "actual": actual}
+            if visible:
+                vis = await loc.first.is_visible()
+                return {"ok": vis, "verified": "visible", "selector": selector, "visible": vis}
+            return {"ok": True, "verified": "selector", "selector": selector, "found": True, "count": cnt}
+        raise RoamError("BAD_ARGS", "verify needs text=, or selector= (optionally value=/visible=)", "")
+
     async def set_controlled(self, on=True, label="Roam controlling",
                              color="#6c5ce7", tab=None):
         # Paint (or clear) the in-page "this tab is being controlled" cue. Lives in a
@@ -712,11 +743,15 @@ class BrowserController:
         res = await page.evaluate(CUE_JS, {"on": bool(on), "label": label, "color": color})
         return {"controlled": bool(on), "shown": res.get("shown", False)}
 
-    async def read_markdown(self, selector=None, tab=None):
+    async def read_markdown(self, selector=None, tab=None, query=None):
         from .markdown import CLEAN_HTML_JS, to_markdown
         page = await self.current_page(tab)
         html = await page.evaluate(CLEAN_HTML_JS, selector)
-        return to_markdown(html)
+        md = to_markdown(html)
+        if query:
+            from .relevance import bm25_filter
+            md = bm25_filter(md, query)
+        return md
 
     async def dismiss_popups(self, tab=None):
         from .popups import DISMISS_JS

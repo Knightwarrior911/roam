@@ -21,6 +21,10 @@ Why roam first:
   roam resolves it via selector memory + self-healing; no brittle CSS needed. snapshot() lists
   the interactive elements with refs when you want to be explicit.
 - extract(fields=…) scrapes repeating items to structured JSON + a replayable Playwright script.
+- read_markdown(url=…, query=…) returns ONLY the passages relevant to query (BM25) — big
+  token savings when researching.
+- verify(text=…) / verify(selector=…, value=…/visible=True) CHECKS a result and returns
+  {ok:bool} — assert an outcome instead of re-snapshotting and grepping.
 - Helpers: web_search, dismiss_popups, solve_cloudflare, stealth_audit, record_api/recipes.
 
 Typical flows:
@@ -118,6 +122,8 @@ async def _maybe_autostart_bridge():
     if _autostart_done:
         return
     _autostart_done = True
+    if os.environ.get("ROAM_DISABLE_BRIDGE_AUTOSTART"):
+        return   # test isolation: never auto-attach to the user's real browser under pytest
     try:
         cfg = load_config()
         if cfg.bridge_auto and _bridge_srv is None:
@@ -205,13 +211,15 @@ async def _read(selector: str | None = None, ref: str | None = None, tab: int | 
     return await _ctl().read(selector, ref, tab=tab)
 @tool
 async def _read_markdown(selector: str | None = None, tab: int | None = None,
-                         url: str | None = None, wait: str = "load"):
+                         url: str | None = None, wait: str = "load",
+                         query: str | None = None):
     """Clean, token-cheap Markdown of the page (or one element). Pass url= to navigate
     there first — "read this page" in a single call. The go-to way to read web content
     for an agent: cheaper and clearer than raw HTML, and it works on stealth/logged-in
-    pages a plain fetch can't reach."""
+    pages a plain fetch can't reach. Pass query= to get back ONLY the passages relevant to
+    that query (BM25 query-focused extraction) — big token savings for research."""
     await _nav_if(url, tab, wait)
-    return await _ctl().read_markdown(selector, tab=tab)
+    return await _ctl().read_markdown(selector, tab=tab, query=query)
 @tool
 async def _dismiss_popups(tab: int | None = None):
     return await _ctl().dismiss_popups(tab=tab)
@@ -257,6 +265,15 @@ async def _web_search(query: str, site: str | None = None, filetype: str | None 
     return {"query_url": url, "results": res[:20]}
 @tool
 async def _eval(js: str, tab: int | None = None): return await _ctl().eval_js(js, tab=tab)
+@tool
+async def _verify(text: str | None = None, selector: str | None = None,
+                  value: str | None = None, visible: bool = False, tab: int | None = None):
+    """Assert a condition on the page and get back {ok: bool, ...} — so you can CHECK a
+    result instead of re-snapshotting and grepping. verify(text="Saved") confirms text is
+    present; verify(selector="#email", value="a@b.com") confirms a field's value;
+    verify(selector=".toast", visible=True) confirms an element is visible."""
+    return await _ctl().verify(text=text, selector=selector, value=value,
+                               visible=visible, tab=tab)
 @tool
 async def _console(level: str | None = None, tail: int = 50, tab: int | None = None):
     return await _ctl().console(level, tail, tab=tab)
@@ -449,6 +466,7 @@ _REGISTRY = {
     "open": _open, "goto": _goto, "back": _back, "forward": _forward, "reload": _reload,
     "snapshot": _snapshot, "click": _click, "type": _type, "press": _press,
     "select": _select, "hover": _hover, "scroll": _scroll, "read": _read, "eval": _eval,
+    "verify": _verify,
     "console": _console, "wait": _wait, "tabs": _tabs, "new_tab": _new_tab,
     "switch_tab": _switch_tab, "close_tab": _close_tab, "cdp": _cdp,
     "recall": _recall, "forget": _forget, "bypass": _bypass,

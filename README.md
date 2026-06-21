@@ -40,10 +40,17 @@ Browsing: `open · goto · back · forward · reload · snapshot · click · hov
 press · scroll · read · eval · screenshot · console · wait · cdp` — plus concurrent
 multi-tab (`tabs · new_tab · switch_tab · close_tab`, every tool takes a `tab` id).
 
-Research + extraction: `read_markdown` (LLM-ready markdown), `extract` (schema/selector →
-structured JSON, incl. repeating rows), `pdf` (save page as PDF), `download` / `upload`,
-`find_links` (by intent), `web_search` (operator-aware), `cookies` (inspect/clear),
-`dismiss_popups` (cookie/consent/modals).
+Research + extraction: `read_markdown` (LLM-ready markdown; pass `query=` for BM25
+query-focused passages only), `extract` (schema/selector → structured JSON, incl. repeating
+rows), `verify` (assert text/value/visible → `{ok}` instead of re-snapshotting), `pdf` (save
+page as PDF), `download` / `upload`, `find_links` (by intent), `web_search` (operator-aware),
+`cookies` (inspect/clear), `dismiss_popups` (cookie/consent/modals).
+
+Backend control: `bridge` (start + block-wait for your real browser via the extension —
+truthful connected status, no phantom "click to connect" step), `set_mode` (`bridge` |
+`managed` | `auto`; `bridge` fails loud instead of silently opening another browser), `mode`
+(what the next call will drive), `set_channel` (`chrome` | `msedge` | `chromium`; Edge
+auto-detected when Chrome is absent).
 
 Stealth + robustness: `stealth_audit` (fingerprint + CDP-leak verdicts), `solve_cloudflare`
 (bounded Turnstile clicker), `heal` (self-healing selectors). Optional `humanize` config adds
@@ -186,13 +193,21 @@ entire tool surface is identical across modes.
 ## Status
 
 v1 + v2 + v3: logged-in browser control, multi-tab, local selector memory + self-healing,
-stealth-mode backend, native paywall bypass, the bridge (drive your real browser), 46 tools.
+stealth-mode backend, native paywall bypass, the bridge (drive your real browser).
 v3 adds: controlled-tab visual cue (tab group + in-page badge), expanded `stealth_audit`
 (fingerprint + CDP-leak verdicts) with the detectable webdriver/UA-CH tells fixed, behavioral
 humanization, a bounded Cloudflare Turnstile solver, API-recipe capture (`record_api`/
-`recipes`), and research extraction (`extract`/`pdf`/`download`/`upload`). CI runs the test
-suite (120 tests) on every push.
+`recipes`), and research extraction (`extract`/`pdf`/`download`/`upload`).
 
-Planned next: bridge-side API capture + cookie access (via the extension's debugger/cookies
-APIs), real-input fidelity over the bridge (`chrome.debugger Input`), offscreen-document
-keepalive, true embedding-based recall.
+v4 (reliability + accuracy + fewer steps): explicit sticky `set_mode`/`mode`/`set_channel`
+(bridge mode fails loud instead of silently opening a different browser; Edge auto-detected),
+a truthful `bridge()` that block-waits for the extension (no phantom "click to connect"),
+SPA-correct bridge `type` (React/Vue/contenteditable), snapshot that sees `position:fixed`/
+`sticky` elements, bridge `read` that descends shadow DOM + same-origin iframes, content
+cleaner that keeps embeds/forms and honors `<base href>` with an 86-entry deny + allow list
+(single source of truth, no JS/Python drift), `read_markdown(query=…)` BM25 query-focused
+passages, and a `verify` assertion tool. CI runs the test suite (183 tests) on every push.
+
+Planned next: real-input fidelity over the bridge (`chrome.debugger Input`), bridge-side
+download/upload/cookies/record_api (the remaining stub methods), `observe`/`act` fused
+primitives, readability-grade root detection, output budgeting, true embedding-based recall.

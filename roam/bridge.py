@@ -179,10 +179,14 @@ class BridgeBrowser:
     async def read(self, selector=None, ref=None, tab=None):
         return (await self.bridge.call("text", self._t({"selector": selector}, tab)))["text"]
 
-    async def read_markdown(self, selector=None, tab=None):
+    async def read_markdown(self, selector=None, tab=None, query=None):
         from .markdown import to_markdown
         r = await self.bridge.call("clean_html", self._t({"selector": selector}, tab))
-        return to_markdown(r.get("html", ""))
+        md = to_markdown(r.get("html", ""))
+        if query:
+            from .relevance import bm25_filter
+            md = bm25_filter(md, query)
+        return md
 
     async def dismiss_popups(self, tab=None):
         return await self.bridge.call("dismiss", self._t({}, tab))
@@ -245,6 +249,28 @@ class BridgeBrowser:
 
     async def eval_js(self, js, tab=None):
         return (await self.bridge.call("eval", self._t({"js": js}, tab)))["value"]
+
+    async def verify(self, text=None, selector=None, value=None, visible=None, tab=None):
+        """Assertion over the bridge via a single eval. Mirrors BrowserController.verify."""
+        import json as _json
+        args = _json.dumps({"text": text, "selector": selector, "value": value,
+                            "visible": bool(visible)})
+        js = (
+            "(() => { const a = " + args + ";"
+            " const inc = (h, n) => (h||'').indexOf(n) !== -1;"
+            " if (a.text != null && !a.selector) { const p = inc(document.body.innerText, a.text);"
+            "   return {ok:p, verified:'text', text:a.text, present:p}; }"
+            " if (a.selector != null) { const el = document.querySelector(a.selector);"
+            "   if (!el) return {ok:false, verified:'selector', selector:a.selector, found:false};"
+            "   if (a.value != null) { const actual = ('value' in el ? el.value : (el.innerText||''));"
+            "     const m = actual === a.value || inc(actual, a.value);"
+            "     return {ok:m, verified:'value', selector:a.selector, expected:a.value, actual:actual}; }"
+            "   if (a.visible) { const r = el.getClientRects().length>0 || el.offsetParent!==null;"
+            "     return {ok:r, verified:'visible', selector:a.selector, visible:r}; }"
+            "   return {ok:true, verified:'selector', selector:a.selector, found:true}; }"
+            " return {ok:false, error:'verify needs text or selector'}; })()"
+        )
+        return await self.eval_js(js, tab=tab)
 
     async def wait(self, for_, value=None, timeout=None, tab=None):
         return await self.bridge.call("wait", self._t({"for": for_, "value": value,
