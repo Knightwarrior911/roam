@@ -214,19 +214,34 @@ async def _read(selector: str | None = None, ref: str | None = None, tab: int | 
 @tool
 async def _read_markdown(selector: str | None = None, tab: int | None = None,
                          url: str | None = None, wait: str = "load",
-                         query: str | None = None, readability: bool = False):
+                         query: str | None = None, readability: bool = False,
+                         use_cache: bool = False, max_chars: int | None = None):
     """Clean, token-cheap Markdown of the page (or one element). Pass url= to navigate
     there first — "read this page" in a single call. The go-to way to read web content
     for an agent: cheaper and clearer than raw HTML, and it works on stealth/logged-in
     pages a plain fetch can't reach. Pass query= to get back ONLY the passages relevant to
     that query (BM25 query-focused extraction). Pass readability=True for trafilatura
-    main-content extraction (best on news/blog/docs; managed browser only)."""
+    main-content extraction (best on news/blog/docs; managed browser only). use_cache=True
+    serves a prior identical read from an in-session LRU (O(1) replay). max_chars caps the
+    returned markdown (output budgeting) with a truncation marker."""
+    from . import cache
+    args = {"selector": selector, "query": query, "readability": readability}
+    if use_cache and url:
+        hit, ok_hit = cache.get("read_markdown", url, args)
+        if ok_hit:
+            return {"markdown": hit, "cache": "HIT"}
     await _nav_if(url, tab, wait)
     ctl = _ctl()
     try:
-        return await ctl.read_markdown(selector, tab=tab, query=query, readability=readability)
+        md = await ctl.read_markdown(selector, tab=tab, query=query, readability=readability)
     except TypeError:
-        return await ctl.read_markdown(selector, tab=tab, query=query)   # bridge: no readability arg
+        md = await ctl.read_markdown(selector, tab=tab, query=query)   # bridge: no readability arg
+    if max_chars and isinstance(md, str) and len(md) > max_chars:
+        md = md[:max_chars] + f"\n\n…[truncated {len(md) - max_chars} chars; raise max_chars or use query=]"
+    if use_cache and url:
+        cache.put("read_markdown", url, args, md)
+        return {"markdown": md, "cache": "MISS"}
+    return md
 @tool
 async def _dismiss_popups(tab: int | None = None):
     return await _ctl().dismiss_popups(tab=tab)
@@ -457,6 +472,26 @@ async def _bridge(enable: bool = True, port: int = 8777, wait: bool = True, time
         _bridge_browser = None
     return {"bridge": "stopped"}
 @tool
+async def _prewarm():
+    """Launch the managed browser now (pay the cold-start once) so the first real read/click
+    isn't the one that waits. No-op if the bridge is the active backend."""
+    import time as _t
+    t0 = _t.time()
+    await _managed().ensure()
+    return {"prewarmed": True, "ms": int((_t.time() - t0) * 1000)}
+@tool
+async def _cache(action: str = "stats"):
+    """In-session read cache control: action = stats | clear | on | off. read_markdown(...,
+    use_cache=True) populates it; identical replays then return {cache:'HIT'} in O(1)."""
+    from . import cache
+    if action == "clear":
+        cache.clear(); return {"cleared": True}
+    if action == "on":
+        cache.set_enabled(True); return {"enabled": True}
+    if action == "off":
+        cache.set_enabled(False); return {"enabled": False}
+    return cache.stats()
+@tool
 async def _bridge_status():
     return {"listening": _bridge_srv is not None,
             "connected": bool(_bridge_srv and _bridge_srv.connected.is_set()),
@@ -527,6 +562,7 @@ _REGISTRY = {
     "recall": _recall, "forget": _forget, "bypass": _bypass,
     "import_cookies": _import_cookies, "bridge": _bridge, "bridge_status": _bridge_status,
     "set_mode": _set_mode, "mode": _mode, "set_channel": _set_channel,
+    "prewarm": _prewarm, "cache": _cache,
     "save_manual": _save_manual, "recall_manual": _recall_manual, "forget_manual": _forget_manual,
     "stealth_audit": _stealth_audit, "read_markdown": _read_markdown, "heal": _heal,
     "dismiss_popups": _dismiss_popups, "find_links": _find_links, "web_search": _web_search,

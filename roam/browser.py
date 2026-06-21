@@ -204,12 +204,24 @@ class BrowserController:
         except Exception as e:
             raise RoamError("CHROME_LAUNCH_FAILED", str(e), "set executable_path in config")
         endpoint = f"http://127.0.0.1:{port}/json/version"
-        for _ in range(60):
+
+        def _probe():
             try:
                 urllib.request.urlopen(endpoint, timeout=1)
-                break
+                return True
             except Exception:
-                await asyncio.sleep(0.5)
+                return False
+
+        for _ in range(60):
+            # fail fast if the subprocess died (bad flags / missing binary) instead of
+            # burning the full 30s; run the blocking urlopen off the event loop.
+            if self._proc.poll() is not None:
+                raise RoamError("CHROME_LAUNCH_FAILED",
+                                f"browser exited early (code {self._proc.returncode})",
+                                "check the channel/executable_path; another instance on this profile?")
+            if await asyncio.to_thread(_probe):
+                break
+            await asyncio.sleep(0.5)
         else:
             raise RoamError("CHROME_LAUNCH_FAILED", "devtools endpoint never came up",
                             "is chrome already running on this profile?")
