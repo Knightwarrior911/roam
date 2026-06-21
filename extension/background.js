@@ -9,6 +9,8 @@ const BACKOFF = [500, 1000, 2000, 4000, 8000, 15000];
 
 let ws = null, attempt = 0, heartbeatTimer = null, pongTimer = null;
 let paused = false;   // user hit "Pause" in the popup -> stop connecting + drop control
+const _apiCapture = new Map();    // tabId -> [captured request summaries]
+const _apiListeners = new Map();  // tabId -> chrome.debugger.onEvent listener
 function log(...a) { console.log("[roam-bridge]", ...a); }
 
 // ---- controlled-tab visual cue (native tab group + in-page border/badge) -------------
@@ -441,6 +443,94 @@ async function handleCommand(msg) {
         await chrome.debugger.attach({ tabId: tid }, "1.3");
         try { const r = await chrome.debugger.sendCommand({ tabId: tid }, "Page.printToPDF", { printBackground: true }); return reply({ data: r.data }); }
         finally { try { await chrome.debugger.detach({ tabId: tid }); } catch (_) {} }
+      }
+      case "cookies": {
+        if (!chrome.cookies) return reply(null, "cookies permission not granted (reload the extension)");
+        const action = p.action || "get";
+        if (action === "clear") {
+          const url = p.url || (tab && tab.url);
+          const all = await chrome.cookies.getAll(p.domain ? { domain: p.domain } : (url ? { url } : {}));
+          let removed = 0;
+          for (const c of all) {
+            const scheme = c.secure ? "https://" : "http://";
+            const cu = scheme + (c.domain.startsWith(".") ? c.domain.slice(1) : c.domain) + c.path;
+            try { await chrome.cookies.remove({ url: cu, name: c.name }); removed++; } catch (e) {}
+          }
+          return reply({ cleared: removed });
+        }
+        if (action === "set") {
+          const url = p.url || (tab && tab.url);
+          await chrome.cookies.set({ url, name: p.name, value: p.value, domain: p.domain, path: p.path || "/" });
+          return reply({ ok: true });
+        }
+        const q = p.domain ? { domain: p.domain } : (tab && tab.url ? { url: tab.url } : {});
+        const cks = await chrome.cookies.getAll(q);
+        return reply({ cookies: cks });
+      }
+      case "download": {
+        if (!chrome.downloads) return reply(null, "downloads permission not granted (reload the extension)");
+        const id = await chrome.downloads.download({ url: p.url, filename: p.filename || undefined });
+        // wait for completion, then read the file bytes via fetch of the file:// is blocked;
+        // instead resolve the on-disk path and return it (the Python side knows the path).
+        const done = await new Promise((res) => {
+          const onCh = (delta) => {
+            if (delta.id === id && delta.state && delta.state.current === "complete") {
+              chrome.downloads.onChanged.removeListener(onCh); res(true);
+            } else if (delta.id === id && delta.state && delta.state.current === "interrupted") {
+              chrome.downloads.onChanged.removeListener(onCh); res(false);
+            }
+          };
+          chrome.downloads.onChanged.addListener(onCh);
+          setTimeout(() => { chrome.downloads.onChanged.removeListener(onCh); res(false); }, 60000);
+        });
+        const [item] = await chrome.downloads.search({ id });
+        return reply({ id, complete: done, path: item ? item.filename : null,
+                       url: item ? item.finalUrl || item.url : p.url, bytes: item ? item.fileSize : null });
+      }
+      case "upload": {
+        // DOM.setFileInputFiles needs the input's backend node id; resolve it via CDP.
+        await chrome.debugger.attach({ tabId: tid }, "1.3");
+        try {
+          await chrome.debugger.sendCommand({ tabId: tid }, "DOM.enable", {});
+          const doc = await chrome.debugger.sendCommand({ tabId: tid }, "DOM.getDocument", { depth: -1, pierce: true });
+          const sel = p.selector || (p.ref ? '[data-roam-ref="' + p.ref + '"]' : 'input[type="file"]');
+          const q = await chrome.debugger.sendCommand({ tabId: tid }, "DOM.querySelector", { nodeId: doc.root.nodeId, selector: sel });
+          if (!q || !q.nodeId) return reply(null, "no file input matched " + sel);
+          const files = Array.isArray(p.files) ? p.files : [p.files];
+          await chrome.debugger.sendCommand({ tabId: tid }, "DOM.setFileInputFiles", { files, nodeId: q.nodeId });
+          return reply({ uploaded: files });
+        } finally { try { await chrome.debugger.detach({ tabId: tid }); } catch (_) {} }
+      }
+      case "record_api": {
+        if (p.enable) {
+          if (!_apiCapture.has(tid)) {
+            const buf = [];
+            _apiCapture.set(tid, buf);
+            await chrome.debugger.attach({ tabId: tid }, "1.3");
+            await chrome.debugger.sendCommand({ tabId: tid }, "Network.enable", {});
+            const onEv = (src, method, params) => {
+              if (!src || src.tabId !== tid) return;
+              if (method === "Network.responseReceived") {
+                const r = params.response || {};
+                const ct = (r.headers && (r.headers["content-type"] || r.headers["Content-Type"])) || "";
+                if (params.type === "XHR" || params.type === "Fetch" || /json/i.test(ct)) {
+                  buf.push({ method: r.requestMethod || "GET", url: r.url, status: r.status, type: params.type, contentType: ct });
+                }
+              }
+            };
+            _apiListeners.set(tid, onEv);
+            chrome.debugger.onEvent.addListener(onEv);
+          }
+          return reply({ recording: true });
+        } else {
+          const buf = _apiCapture.get(tid) || [];
+          const onEv = _apiListeners.get(tid);
+          if (onEv) { try { chrome.debugger.onEvent.removeListener(onEv); } catch (e) {} _apiListeners.delete(tid); }
+          _apiCapture.delete(tid);
+          try { await chrome.debugger.sendCommand({ tabId: tid }, "Network.disable", {}); } catch (e) {}
+          try { await chrome.debugger.detach({ tabId: tid }); } catch (e) {}
+          return reply({ recording: false, requests: buf });
+        }
       }
       case "reload_extension": { setTimeout(() => chrome.runtime.reload(), 200); return reply({ reloading: true }); }
       default: return reply(null, "unknown method: " + msg.method);

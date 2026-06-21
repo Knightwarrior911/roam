@@ -308,16 +308,12 @@ class BridgeBrowser:
                         "if a challenge persists, click it once by hand"}
 
     async def record_api(self, enable=True, tab=None):
-        # Bridge-side network capture (debugger Network domain in the extension) is the next
-        # increment; today, capture API recipes by visiting the site in the managed browser.
-        return {"recording": False,
-                "note": "API-recipe capture currently runs on the managed browser; "
-                        "bridge-side capture via the extension is a planned increment"}
+        # bridge-side capture via the extension's debugger Network domain
+        return await self.bridge.call("record_api", self._t({"enable": bool(enable)}, tab),
+                                      timeout=60)
 
     async def cookies(self, action="get", domain=None, tab=None):
-        return {"cookies": [],
-                "note": "cookie access over the bridge (chrome.cookies) is a planned "
-                        "increment; use the managed browser to inspect/clear cookies"}
+        return await self.bridge.call("cookies", self._t({"action": action, "domain": domain}, tab))
 
     async def extract(self, fields, item_selector=None, tab=None):
         r = await self.bridge.call("extract", self._t({"fields": fields, "item": item_selector}, tab))
@@ -332,14 +328,25 @@ class BridgeBrowser:
         return {"pdf": dest}
 
     async def download(self, ref=None, selector=None, url=None, path=None, tab=None):
-        return {"downloaded": None,
-                "note": "downloads land in your real browser's Downloads folder; trigger the "
-                        "link normally — bridge-mediated save is a planned increment"}
+        if not url:
+            # resolve the href of the ref/selector first, then download by URL
+            sel = selector or (f'[data-roam-ref="{ref}"]' if ref else "a[download],a[href]")
+            url = await self.eval_js(
+                f"(() => {{ const e = document.querySelector({sel!r}); "
+                f"return e ? (e.href || e.getAttribute('href')) : null; }})()", tab=tab)
+            if not url:
+                return {"downloaded": None, "note": "no downloadable URL found for that ref/selector"}
+        import os
+        fn = os.path.basename(path) if path else None
+        r = await self.bridge.call("download", self._t({"url": url, "filename": fn}, tab), timeout=90)
+        return {"downloaded": r.get("path"), "url": r.get("url"), "complete": r.get("complete"),
+                "bytes": r.get("bytes"),
+                "note": "saved to your real browser's Downloads folder (or the given filename)"}
 
     async def upload(self, files, ref=None, selector=None, tab=None):
-        return {"uploaded": None,
-                "note": "file-input upload over the bridge needs DOM.setFileInputFiles "
-                        "(planned); use the managed browser for automated uploads"}
+        paths = files if isinstance(files, list) else [files]
+        return await self.bridge.call(
+            "upload", self._t({"files": paths, "ref": ref, "selector": selector}, tab), timeout=60)
 
     async def relocate(self, fingerprint, tab=None):
         return await self.bridge.call("relocate", self._t({"fp": fingerprint}, tab))
