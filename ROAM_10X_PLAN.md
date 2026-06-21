@@ -113,6 +113,19 @@ Tools:
 
 ---
 
+## STATUS — ALL PHASES SHIPPED (branch feat/10x, 11 commits, 210 tests green, 62 tools)
+
+P0 ✅ (mode/bridge/Edge/race/autostart/instructions) · P1.1 ✅ type · P1.3/1.5/1.7 ✅
+(wait_for_ref/timeout→NOT_ACTIONABLE/dialog auto-handle; 1.4 covered by networkidle+actionability) ·
+P2.1 ✅ visibility · P2.2 ✅ shadow+iframe snapshot · P2.3 ✅ bridge text · P2.4 ✅ readability ·
+P2.5/2.6/2.7/2.8 ✅ embeds/forms/blocklist/base-href/single-source · P3.1 ✅ observe · P3.2 ✅ act ·
+P3.3 ✅ BM25 query · P3.5 ✅ verify · P3.6 ✅ extract_auto+structured_data · P3.7 ✅ max_chars budget ·
+P4 ✅ cache+prewarm+cold-start · P5.1 ✅ bridge download/upload/cookies/record_api ·
+P5.2 ✅ pdf_text · P5.3 ✅ storage · P5.6 ✅ tool annotations.
+Remaining (deferred, lower leverage): P1.2 CDP real input over bridge · P3.4 auto-snapshot ·
+P3.6 LLM extract_schema · P5.4 dedicated network-introspection tools (console exists) ·
+P5.5 frame refs beyond fN- (cross-origin) · true embedding recall.
+
 ## Execution order (autonomous)
 1. **P0** (bugs you reported) — ship as one commit on a feature branch, with tests.
 2. **P1.1, P2.1, P2.3** — highest reliability/accuracy per line changed (type-setter, snapshot visibility, bridge text). These three alone fix "actions silently fail" + "reads come back empty" on every modern app.
