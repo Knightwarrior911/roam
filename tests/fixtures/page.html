@@ -17,6 +17,12 @@
   <div id="out"></div>
   <!-- fixed-position button: offsetParent===null but visible; must still be snapshotted -->
   <button id="fixedbtn" style="position:fixed;top:0;right:0">FixedClose</button>
+  <!-- open shadow root: the button inside must be snapshotted + resolvable -->
+  <div id="host"></div>
+  <script>
+    const sr = document.getElementById('host').attachShadow({mode:'open'});
+    sr.innerHTML = '<button id="shadowbtn">ShadowGo</button>';
+  </script>
   <div id="section2" style="margin-top:1500px">Bottom</div>
 </body>
 </html>

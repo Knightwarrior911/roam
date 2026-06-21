@@ -61,6 +61,7 @@ class BrowserController:
         self.active = None       # "t1"
         self._tab_seq = 0
         self._refs = set()       # refs valid in the latest snapshot
+        self._frames = {}        # ref-prefix (fN-) -> same-origin Frame for the latest snapshot
         self.console_buf = deque(maxlen=500)
         self.memory = SelectorMemory(
             os.path.join(os.path.dirname(cfg.profile_dir) or ".", "memory.db"))
@@ -384,11 +385,40 @@ class BrowserController:
         nodes = await page.evaluate(
             SNAPSHOT_JS, {"interactiveOnly": interactive_only, "rootSelector": selector}
         )
+        # also descend same-origin iframes: stamp refs inside each frame with an fN- prefix
+        # so the agent can act on embedded forms (Calendly/Typeform/Stripe-same-origin).
+        self._frames = {}
+        if selector is None:
+            fi = 0
+            for fr in page.frames:
+                if fr == page.main_frame:
+                    continue
+                fi += 1
+                pfx = f"f{fi}-"
+                try:
+                    fnodes = await fr.evaluate(
+                        SNAPSHOT_JS, {"interactiveOnly": interactive_only,
+                                      "rootSelector": None, "refPrefix": pfx})
+                except Exception:
+                    continue   # cross-origin frame: can't evaluate, skip
+                if fnodes:
+                    self._frames[pfx] = fr
+                    nodes.extend(fnodes)
         self._refs = {n["ref"] for n in nodes}
         return build_outline(nodes)
 
     async def _resolve(self, ref, tab=None):
-        # resolve against the target tab's DOM (per-tab correct for concurrent multi-tab)
+        # frame-scoped ref (fN-eM) resolves inside the captured same-origin frame
+        if isinstance(ref, str) and ref[:1] == "f" and "-" in ref:
+            pfx = ref.split("-", 1)[0] + "-"
+            fr = getattr(self, "_frames", {}).get(pfx)
+            if fr is not None:
+                loc = fr.locator(f'[data-roam-ref="{ref}"]')
+                if await loc.count() == 0:
+                    raise RoamError("REF_STALE", f"ref {ref} not in current snapshot", "re-run snapshot")
+                return loc
+        # resolve against the target tab's DOM (per-tab correct for concurrent multi-tab).
+        # Playwright locators pierce OPEN shadow roots, so shadow-stamped refs resolve here.
         page = await self.current_page(tab)
         loc = page.locator(f'[data-roam-ref="{ref}"]')
         if await loc.count() == 0:
@@ -743,11 +773,21 @@ class BrowserController:
         res = await page.evaluate(CUE_JS, {"on": bool(on), "label": label, "color": color})
         return {"controlled": bool(on), "shown": res.get("shown", False)}
 
-    async def read_markdown(self, selector=None, tab=None, query=None):
-        from .markdown import CLEAN_HTML_JS, to_markdown
+    async def read_markdown(self, selector=None, tab=None, query=None, readability=False):
+        from .markdown import CLEAN_HTML_JS, to_markdown, readability_markdown
         page = await self.current_page(tab)
-        html = await page.evaluate(CLEAN_HTML_JS, selector)
-        md = to_markdown(html)
+        md = None
+        if readability and selector is None:
+            # readability-grade main-content extraction (trafilatura) beats the selector-chain
+            # root pick on news/blog/docs; fall back to the DOM cleaner when it returns nothing.
+            try:
+                raw = await page.content()
+                md = readability_markdown(raw, url=page.url)
+            except Exception:
+                md = None
+        if not md:
+            html = await page.evaluate(CLEAN_HTML_JS, selector)
+            md = to_markdown(html)
         if query:
             from .relevance import bm25_filter
             md = bm25_filter(md, query)

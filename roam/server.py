@@ -212,14 +212,19 @@ async def _read(selector: str | None = None, ref: str | None = None, tab: int | 
 @tool
 async def _read_markdown(selector: str | None = None, tab: int | None = None,
                          url: str | None = None, wait: str = "load",
-                         query: str | None = None):
+                         query: str | None = None, readability: bool = False):
     """Clean, token-cheap Markdown of the page (or one element). Pass url= to navigate
     there first — "read this page" in a single call. The go-to way to read web content
     for an agent: cheaper and clearer than raw HTML, and it works on stealth/logged-in
     pages a plain fetch can't reach. Pass query= to get back ONLY the passages relevant to
-    that query (BM25 query-focused extraction) — big token savings for research."""
+    that query (BM25 query-focused extraction). Pass readability=True for trafilatura
+    main-content extraction (best on news/blog/docs; managed browser only)."""
     await _nav_if(url, tab, wait)
-    return await _ctl().read_markdown(selector, tab=tab, query=query)
+    ctl = _ctl()
+    try:
+        return await ctl.read_markdown(selector, tab=tab, query=query, readability=readability)
+    except TypeError:
+        return await ctl.read_markdown(selector, tab=tab, query=query)   # bridge: no readability arg
 @tool
 async def _dismiss_popups(tab: int | None = None):
     return await _ctl().dismiss_popups(tab=tab)

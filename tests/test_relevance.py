@@ -50,3 +50,15 @@ def test_bm25_no_match_falls_back_to_full():
     # query terms absent from the doc -> return everything rather than nothing
     out = bm25_filter(_DOC, "zzz qqq xxx")
     assert out == _DOC
+
+
+def test_readability_extracts_main_content():
+    from roam.markdown import readability_markdown
+    html = ("<html><body><nav>Home About Contact</nav>"
+            "<article><h1>Big News</h1><p>This is the substantive article body that "
+            "trafilatura keeps as the main content of the page, long enough to score.</p>"
+            "<p>A second meaningful paragraph adds more detail and substance here.</p>"
+            "</article><footer>copyright junk</footer></body></html>")
+    md = readability_markdown(html, url="https://x.example/post")
+    assert "substantive article body" in md
+    assert "copyright junk" not in md

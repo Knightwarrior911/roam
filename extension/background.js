@@ -186,7 +186,7 @@ function SNAPSHOT_FN(interactiveOnly) {
   // fixed/sticky elements have offsetParent===null but are visible — include them.
   const isVis = (el) => { if (el.tagName==='OPTION') return true; if (el.offsetParent !== null) return true; if (el.getClientRects().length > 0) return true; const p = getComputedStyle(el).position; return p==='fixed' || p==='sticky'; };
   const out = []; let n = 0;
-  (function walk(el){ for (const c of el.children){ const vis = isVis(c); if (vis && (!interactiveOnly || isI(c))){ n++; const r='e'+n; c.setAttribute('data-roam-ref',r); out.push('- '+role(c)+(name(c)?' "'+name(c)+'"':'')+viewOf(c)+' [ref='+r+']'); } walk(c);} })(document.body);
+  (function walk(el){ for (const c of el.children){ const vis = isVis(c); if (vis && (!interactiveOnly || isI(c))){ n++; const r='e'+n; c.setAttribute('data-roam-ref',r); out.push('- '+role(c)+(name(c)?' "'+name(c)+'"':'')+viewOf(c)+' [ref='+r+']'); } if (c.shadowRoot) walk(c.shadowRoot); walk(c);} })(document.body);
   return out.join('\n') || '(no elements)';
 }
 // @generated-from roam/markdown.py:CLEAN_HTML_JS — run `py tools/sync_inject.py`; do not edit by hand

@@ -49,15 +49,20 @@ SNAPSHOT_JS = r"""
   };
   const out = [];
   let n = 0;
+  const prefix = (args && args.refPrefix) || '';
   const walk = (el) => {
     for (const child of el.children) {
       const vis = isVisible(child);
       if (vis && (!interactiveOnly || isInteractive(child))) {
         n += 1;
-        const ref = 'e' + n;
+        const ref = prefix + 'e' + n;
         child.setAttribute('data-roam-ref', ref);
         out.push({ ref, role: roleOf(child), name: nameOf(child), view: viewOf(child) });
       }
+      // descend OPEN shadow roots — the whole SaaS surface (Lit/FAST web components,
+      // YouTube player, many design-system buttons) lives there. Playwright's locator
+      // pierces open shadow, so a stamped data-roam-ref still resolves for click/type.
+      if (child.shadowRoot) walk(child.shadowRoot);
       walk(child);
     }
   };

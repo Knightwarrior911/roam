@@ -292,3 +292,23 @@ def to_markdown(html):
     if not html:
         return ""
     return _md(html, heading_style="ATX", strip=["script", "style"]).strip()
+
+
+def readability_markdown(html, url=None):
+    """Readability-grade main-content extraction via trafilatura (DOM-distillation scoring
+    that beats the article/main/#main selector chain on news/blog/docs). Returns markdown,
+    or "" if trafilatura is unavailable or finds nothing (caller falls back to the cleaner)."""
+    if not html:
+        return ""
+    try:
+        import trafilatura
+    except Exception:
+        return ""
+    try:
+        md = trafilatura.extract(
+            html, url=url, output_format="markdown",
+            include_links=True, include_tables=True, include_images=True,
+            favor_recall=True)
+        return (md or "").strip()
+    except Exception:
+        return ""

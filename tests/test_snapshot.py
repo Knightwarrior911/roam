@@ -31,6 +31,19 @@ async def test_snapshot_includes_fixed_position_element(ctl):
     assert "FixedClose" in out
 
 
+async def test_snapshot_descends_open_shadow_root(ctl):
+    # the button lives inside an open shadow root; the walker must stamp + list it,
+    # and the stamped ref must resolve (Playwright pierces open shadow).
+    out = await ctl.snapshot()
+    assert "ShadowGo" in out
+    # find its ref and resolve it
+    import re
+    m = re.search(r'ShadowGo"\s*\[ref=(e\d+)\]', out)
+    assert m, out
+    loc = await ctl._resolve(m.group(1))
+    assert await loc.count() == 1
+
+
 async def test_stale_ref_raises(ctl):
     await ctl.snapshot()
     with pytest.raises(RoamError) as ei:
