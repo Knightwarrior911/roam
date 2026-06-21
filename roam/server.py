@@ -273,6 +273,25 @@ async def _web_search(query: str, site: str | None = None, filetype: str | None 
 @tool
 async def _eval(js: str, tab: int | None = None): return await _ctl().eval_js(js, tab=tab)
 @tool
+async def _observe(instruction: str, scope: str | None = None, max_results: int = 8,
+                   tab: int | None = None, url: str | None = None, wait: str = "load"):
+    """Plan in one shot: snapshot the page and return the interactive elements most relevant
+    to `instruction`, ranked, each with a ref + suggested method — feed them straight into
+    act()/click()/type() without re-reading the whole outline. url= navigates first."""
+    await _nav_if(url, tab, wait)
+    return await _ctl().observe(instruction, scope=scope, max_results=max_results, tab=tab)
+@tool
+async def _act(instruction: str, text: str | None = None, variables: dict | None = None,
+               tab: int | None = None, timeout: int | None = None,
+               url: str | None = None, wait: str = "load"):
+    """Do it in ONE call: pick the element best matching `instruction`, wait for it to be
+    actionable, then click or type (inferred). %name% placeholders in text/instruction are
+    substituted from `variables` locally so secrets never enter the element-picking step.
+    Self-heals (re-observes once) on a miss. e.g. act("click Sign in") /
+    act("type into the search box", text="roam"). url= navigates first."""
+    await _nav_if(url, tab, wait)
+    return await _ctl().act(instruction, text=text, variables=variables, tab=tab, timeout=timeout)
+@tool
 async def _verify(text: str | None = None, selector: str | None = None,
                   value: str | None = None, visible: bool = False, tab: int | None = None):
     """Assert a condition on the page and get back {ok: bool, ...} — so you can CHECK a
@@ -501,7 +520,7 @@ _REGISTRY = {
     "open": _open, "goto": _goto, "back": _back, "forward": _forward, "reload": _reload,
     "snapshot": _snapshot, "click": _click, "type": _type, "press": _press,
     "select": _select, "hover": _hover, "scroll": _scroll, "read": _read, "eval": _eval,
-    "verify": _verify,
+    "verify": _verify, "observe": _observe, "act": _act,
     "console": _console, "wait": _wait, "wait_for_ref": _wait_for_ref,
     "last_dialog": _last_dialog, "tabs": _tabs, "new_tab": _new_tab,
     "switch_tab": _switch_tab, "close_tab": _close_tab, "cdp": _cdp,

@@ -439,6 +439,96 @@ class BrowserController:
             raise RoamError("REF_STALE", f"ref {ref} not in current snapshot", "re-run snapshot")
         return loc
 
+    # ---- high-level: observe (plan) + act (fused do) ----
+    _ACTION_HINTS = {
+        "click": ("click", "press", "tap", "open", "submit", "go", "search", "select",
+                  "choose", "add", "buy", "checkout", "next", "continue", "sign", "log",
+                  "accept", "close", "dismiss", "toggle", "expand"),
+        "type": ("type", "enter", "fill", "input", "write", "set", "search for", "paste"),
+    }
+
+    def _infer_method(self, instruction, role):
+        low = (instruction or "").lower()
+        if any(w in low for w in self._ACTION_HINTS["type"]):
+            return "type"
+        if role in ("textbox", "combobox", "searchbox"):
+            return "type"
+        return "click"
+
+    async def observe(self, instruction, scope=None, max_results=8, tab=None):
+        """LLM-free 'plan' primitive: snapshot the page (or scope subtree) and return the
+        interactive elements most relevant to `instruction`, ranked, each with a ref + the
+        suggested method — ready to feed straight into act()/click()/type(). Lets a caller
+        plan a whole flow from one snapshot instead of reasoning over the full outline."""
+        from .memory import rank_score, _tokens
+        from .snapshot import SNAPSHOT_JS
+        page = await self.page(tab)
+        nodes = await page.evaluate(
+            SNAPSHOT_JS, {"interactiveOnly": True, "rootSelector": scope})
+        self._refs = {n["ref"] for n in nodes}
+        qtok = _tokens(instruction)
+        method = self._infer_method(instruction, None)
+        scored = []
+        for n in nodes:
+            hay = f'{n.get("name","")} {n.get("role","")}'
+            s = rank_score(qtok, hay)
+            if s <= 0 and instruction:
+                continue
+            scored.append({"ref": n["ref"], "role": n.get("role"), "name": n.get("name"),
+                           "view": n.get("view", "in"),
+                           "method": self._infer_method(instruction, n.get("role")),
+                           "score": round(s, 3)})
+        scored.sort(key=lambda r: r["score"], reverse=True)
+        return {"instruction": instruction, "method": method,
+                "candidates": scored[:max_results] if scored else
+                              [{"ref": n["ref"], "role": n.get("role"), "name": n.get("name"),
+                                "method": method, "score": 0.0} for n in nodes[:max_results]]}
+
+    async def act(self, instruction, text=None, variables=None, tab=None, timeout=None):
+        """Fused do-it-in-one-call primitive: pick the element best matching `instruction`,
+        wait for it to be actionable, then click or type (inferred from the instruction).
+        %name% placeholders in `text`/`instruction` are substituted from `variables` LOCALLY
+        so secrets never appear in the picked-element reasoning. Returns what it did."""
+        variables = variables or {}
+
+        def _subst(s):
+            if not s:
+                return s
+            for k, v in variables.items():
+                s = s.replace(f"%{k}%", str(v))
+            return s
+
+        obs = await self.observe(instruction, tab=tab)
+        cands = obs["candidates"]
+        if not cands:
+            raise RoamError("ACT_NO_MATCH", f"no element matches {instruction!r}",
+                            "snapshot the page or pass a more specific instruction")
+        top = cands[0]
+        method = top["method"]
+        ref = top["ref"]
+        # wait for actionable, then do it
+        await self.wait_for_ref(ref=ref, state="visible", timeout=timeout, tab=tab)
+        if method == "type":
+            payload = _subst(text if text is not None else instruction)
+            try:
+                await self.type_text(ref=ref, text=payload, tab=tab)
+            except RoamError:
+                # self-heal: re-observe once and retry on the fresh top candidate
+                obs2 = await self.observe(instruction, tab=tab)
+                if obs2["candidates"]:
+                    ref = obs2["candidates"][0]["ref"]
+                    await self.type_text(ref=ref, text=payload, tab=tab)
+            return {"acted": "type", "ref": ref, "matched": top["name"], "score": top["score"]}
+        else:
+            try:
+                await self.click(ref=ref, tab=tab, timeout=timeout)
+            except RoamError:
+                obs2 = await self.observe(instruction, tab=tab)
+                if obs2["candidates"]:
+                    ref = obs2["candidates"][0]["ref"]
+                    await self.click(ref=ref, tab=tab, timeout=timeout)
+            return {"acted": "click", "ref": ref, "matched": top["name"], "score": top["score"]}
+
     async def _target(self, ref=None, selector=None, tab=None):
         if ref is not None:
             return await self._resolve(ref, tab)

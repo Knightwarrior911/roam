@@ -142,6 +142,52 @@ class BridgeBrowser:
     async def goto(self, url, wait="load", tab=None):
         return await self.bridge.call("navigate", self._t({"url": url}, tab), timeout=60)
 
+    async def observe(self, instruction, scope=None, max_results=8, tab=None):
+        """LLM-free plan over the bridge: snapshot the real page, parse refs/names, rank by
+        relevance to `instruction`. Returns the same shape as the managed observe()."""
+        import re as _re
+        from .memory import rank_score, _tokens
+        outline = await self.snapshot(interactive_only=True, tab=tab)
+        rows = []
+        for line in (outline or "").split("\n"):
+            m = _re.match(r'- (\S+)(?:\s+"([^"]*)")?.*\[ref=(\w+)\]', line)
+            if m:
+                rows.append({"role": m.group(1), "name": m.group(2) or "", "ref": m.group(3)})
+        qtok = _tokens(instruction)
+        low = (instruction or "").lower()
+        method = "type" if ("type" in low or "enter" in low or "fill" in low or "search for" in low) else "click"
+        scored = []
+        for r in rows:
+            s = rank_score(qtok, f'{r["name"]} {r["role"]}')
+            meth = "type" if r["role"] in ("textbox", "combobox", "searchbox") else method
+            if s > 0 or not instruction:
+                scored.append({"ref": r["ref"], "role": r["role"], "name": r["name"],
+                               "method": meth, "score": round(s, 3)})
+        scored.sort(key=lambda r: r["score"], reverse=True)
+        if not scored:
+            scored = [{"ref": r["ref"], "role": r["role"], "name": r["name"],
+                       "method": method, "score": 0.0} for r in rows[:max_results]]
+        return {"instruction": instruction, "method": method, "candidates": scored[:max_results]}
+
+    async def act(self, instruction, text=None, variables=None, tab=None, timeout=None):
+        variables = variables or {}
+        def _subst(s):
+            if not s:
+                return s
+            for k, v in variables.items():
+                s = s.replace(f"%{k}%", str(v))
+            return s
+        obs = await self.observe(instruction, tab=tab)
+        cands = obs["candidates"]
+        if not cands:
+            raise BridgeError(f"no element matches {instruction!r}")
+        top = cands[0]
+        if top["method"] == "type":
+            await self.type_text(ref=top["ref"], text=_subst(text if text is not None else instruction), tab=tab)
+            return {"acted": "type", "ref": top["ref"], "matched": top["name"], "score": top["score"]}
+        await self.click(ref=top["ref"], tab=tab)
+        return {"acted": "click", "ref": top["ref"], "matched": top["name"], "score": top["score"]}
+
     async def back(self, tab=None):
         return await self.bridge.call("back", self._t({}, tab))
 
