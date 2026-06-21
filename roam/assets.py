@@ -11,7 +11,8 @@ from urllib.parse import urljoin
 ASSETS_JS = r"""
 (selector) => {
   const root = (selector && document.querySelector(selector)) || document;
-  const abs = (u) => { try { return new URL(u, location.href).href; } catch (e) { return null; } };
+  const baseHref = (document.querySelector('base[href]') && document.querySelector('base[href]').getAttribute('href')) || location.href;
+  const abs = (u) => { try { return new URL(u, baseHref).href; } catch (e) { return null; } };
   const cats = { images: new Set(), scripts: new Set(), styles: new Set(), fonts: new Set(),
                  media: new Set(), iframes: new Set(), links: new Set() };
   const add = (set, u) => { const h = u && abs(u); if (h) set.add(h); };

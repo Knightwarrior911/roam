@@ -14,17 +14,77 @@ from urllib.parse import urljoin
 
 from markdownify import markdownify as _md
 
+# ---- single source of truth for the junk blocklist (no more JS/Python drift) ----
+# Expanded from 28 -> ~70 entries (Firecrawl excludeNonMainTags + crawl4ai class set + the
+# ad-tech long tail). Used to BUILD the JS string below AND the offline bs4 path, so the two
+# can never diverge.
+_JUNK_LIST = [
+    # structural
+    'header', 'footer', 'nav', 'aside',
+    '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]', '[role="complementary"]',
+    '.header', '.top', '.footer', '.bottom', '#footer', '#header',
+    '.nav', '.navbar', '.navigation', '#nav', '.menu', '.sidebar', '#sidebar', '.side', '.aside',
+    '.breadcrumbs', '.breadcrumb', '.skip-link', '.skip-to-content',
+    # ads / ad-tech
+    '.ad', '.ads', '.advert', '.advertisement', '.ad-slot', '.ad-container', '.adsbygoogle',
+    '.dfp', '[class*="outbrain" i]', '[class*="taboola" i]', '[class*="adslot" i]',
+    '[aria-label="Advertisement"]', '[data-test*="ad" i]', '[data-testid*="ad" i]',
+    # consent / banners / modals / overlays
+    '.cookie', '.cookie-banner', '.gdpr', '.onetrust', '.cc-window', '#onetrust-banner-sdk',
+    '.popup', '.modal', '.overlay', '.interstitial', '.app-banner', '.sticky-banner',
+    '.paywall', '.subscribe-wall', '.signup-wall', '[class*="paywall" i]',
+    # social / share / newsletter / promo
+    '.social', '.social-media', '.social-links', '#social', '.share', '.share-buttons',
+    '.newsletter', '.newsletter-signup', '.inline-newsletter', '.promo', '.intercom-launcher',
+    # related / recirculation / comments
+    '.related', '.related-stories', '.recommended', '.recirc', '.trending', '.most-popular',
+    '.most-read', '.sibling-stories', '[id*="comments" i]', '[class*="comments" i]',
+    '.comments-section', '[class*="lang-selector" i]', '.language-selector', '#language-selector',
+    # misc widgets
+    '.widget', '#cookie', '.toast-container', '.feedback-tab',
+]
+# selectors that SURVIVE any deny pass (the article was wrapped in a junk-ish class)
+_FORCE_INCLUDE_LIST = [
+    'article', '[role="main"]', 'main', '#main',
+    '.article-body', '.post-content', '.entry-content', '[itemprop="articleBody"]',
+    '[data-testid="article-content"]',
+]
+# embed iframes worth keeping as a markdown link instead of dropping
+_EMBED_HOST_RE = (r"youtube\.com|youtu\.be|vimeo\.com|codepen\.io|jsfiddle\.net|codesandbox\.io|"
+                  r"stackblitz\.com|figma\.com|miro\.com|docs\.google\.com|player\.|embed\.|"
+                  r"twitter\.com|x\.com|reddit\.com|loom\.com|gist\.github\.com")
+
+_JUNK_SELECTOR = ",".join(_JUNK_LIST)
+_FORCE_INCLUDE_SELECTOR = ",".join(_FORCE_INCLUDE_LIST)
+_JS_JUNK = ",".join(_JUNK_LIST)   # same list, embedded into the page-side cleaner
+
 # Returns the cleaned main-content innerHTML of the live (JS-rendered) page.
+# Built with the shared _JS_JUNK so it can't drift from the offline bs4 path.
 CLEAN_HTML_JS = r"""
 (selector) => {
   const doc = document.cloneNode(true);
-  doc.querySelectorAll('script,style,noscript,iframe,svg,template,link,form').forEach(e => e.remove());
-  const junk = [
-    'header','footer','nav','aside','[role="navigation"]','[role="banner"]','[role="contentinfo"]',
-    '.nav','.navbar','.sidebar','.menu','.ad','.ads','.advert','.advertisement','.social','.share',
-    '.breadcrumbs','.cookie','.popup','.modal','.newsletter','.promo','.related','.recommended',
-    '[class*="paywall" i]','[id*="comments" i]','[class*="comments" i]'
-  ].join(',');
+  // base href governs URL resolution when present, else the page URL.
+  const baseHref = (doc.querySelector('base[href]') && doc.querySelector('base[href]').getAttribute('href')) || location.href;
+  // keep known embeds as links before nuking iframes; preserve <form> as a control list.
+  const EMBED = /__EMBED_RE__/i;
+  doc.querySelectorAll('iframe[src]').forEach(f => {
+    let src = f.getAttribute('src') || '';
+    try { src = new URL(src, baseHref).href; } catch (e) {}
+    if (EMBED.test(src)) { const a = doc.createElement('a'); a.setAttribute('href', src); a.textContent = (f.getAttribute('title') || f.getAttribute('aria-label') || 'embed') + ' (embed)'; f.replaceWith(a); }
+    else f.remove();
+  });
+  doc.querySelectorAll('form').forEach(fm => {
+    const ctrls = [...fm.querySelectorAll('input,select,textarea,button')].map(c => {
+      const nm = c.getAttribute('name') || c.getAttribute('aria-label') || c.getAttribute('placeholder') || c.type || c.tagName.toLowerCase();
+      return '- ' + nm + ' (' + (c.type || c.tagName.toLowerCase()) + ')' + (c.required ? ' *' : '');
+    });
+    if (ctrls.length) { const pre = doc.createElement('pre'); pre.textContent = 'Form:\n' + ctrls.join('\n'); fm.replaceWith(pre); }
+    else fm.remove();
+  });
+  doc.querySelectorAll('script,style,noscript,template,link').forEach(e => e.remove());
+  // svg: keep only if it carries a title/aria-label (real icon), else drop decorative ones.
+  doc.querySelectorAll('svg').forEach(s => { if (!s.querySelector('title') && !s.getAttribute('aria-label')) s.remove(); });
+  const junk = '__JS_JUNK__';
   doc.querySelectorAll(junk).forEach(e => e.remove());
   // crawl4ai-style pruning: blocks that are tiny AND mostly link text are leftover nav /
   // boilerplate the blocklist missed (menus, breadcrumbs, tag clouds). Defensive: never throw.
@@ -38,7 +98,7 @@ CLEAN_HTML_JS = r"""
       if (text.length && linkLen / text.length > 0.8) el.remove();
     });
   } catch (e) {}
-  const abs = (el, attr) => { try { el.setAttribute(attr, new URL(el.getAttribute(attr), location.href).href); } catch (e) {} };
+  const abs = (el, attr) => { try { el.setAttribute(attr, new URL(el.getAttribute(attr), baseHref).href); } catch (e) {} };
   doc.querySelectorAll('a[href]').forEach(a => abs(a, 'href'));
   doc.querySelectorAll('img[src]').forEach(i => abs(i, 'src'));
   const root = (selector && doc.querySelector(selector))
@@ -46,16 +106,7 @@ CLEAN_HTML_JS = r"""
     || doc.querySelector('main') || doc.querySelector('#main') || doc.body;
   return root ? root.innerHTML : '';
 }
-"""
-
-# same curated junk as CLEAN_HTML_JS (soupsieve handles the `i` case-insensitive flags)
-_JUNK_SELECTOR = ",".join([
-    'header', 'footer', 'nav', 'aside', '[role="navigation"]', '[role="banner"]',
-    '[role="contentinfo"]', '.nav', '.navbar', '.sidebar', '.menu', '.ad', '.ads', '.advert',
-    '.advertisement', '.social', '.share', '.breadcrumbs', '.cookie', '.popup', '.modal',
-    '.newsletter', '.promo', '.related', '.recommended',
-    '[class*="paywall" i]', '[id*="comments" i]', '[class*="comments" i]',
-])
+""".replace("__JS_JUNK__", _JS_JUNK).replace("__EMBED_RE__", _EMBED_HOST_RE)
 
 # last-resort cleaner when bs4 is somehow unavailable: drop obvious non-content blocks whole
 _REGEX_STRIP = re.compile(
@@ -65,7 +116,8 @@ _REGEX_STRIP = re.compile(
 def clean_html_str(html, base_url=None):
     """OFFLINE twin of CLEAN_HTML_JS for raw (un-rendered) HTML: same blocklist + tiny/
     link-dense pruning + main-root pick + absolutized a[href]/img[src]. Used by the fast
-    no-render engine, where there is no live DOM to run the JS in."""
+    no-render engine, where there is no live DOM to run the JS in. Honors <base href>,
+    keeps known embeds as links, and preserves <form> as a control list."""
     if not html:
         return ""
     try:
@@ -73,10 +125,52 @@ def clean_html_str(html, base_url=None):
     except Exception:
         return _REGEX_STRIP.sub("", html)
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "noscript", "iframe", "svg", "template", "link", "form"]):
+    # <base href> overrides base_url for URL resolution when present
+    base_el = soup.find("base", href=True)
+    if base_el and base_el.get("href"):
+        base_url = urljoin(base_url or "", base_el["href"]) if base_url else base_el["href"]
+    # keep known embeds as links before dropping iframes
+    embed_re = re.compile(_EMBED_HOST_RE, re.I)
+    for fr in soup.find_all("iframe"):
+        src = fr.get("src") or ""
+        abss = urljoin(base_url, src) if base_url else src
+        if src and embed_re.search(abss):
+            a = soup.new_tag("a", href=abss)
+            a.string = (fr.get("title") or fr.get("aria-label") or "embed") + " (embed)"
+            fr.replace_with(a)
+        else:
+            fr.decompose()
+    # preserve forms as a control list
+    for fm in soup.find_all("form"):
+        ctrls = []
+        for c in fm.find_all(["input", "select", "textarea", "button"]):
+            nm = c.get("name") or c.get("aria-label") or c.get("placeholder") or c.get("type") or c.name
+            ctrls.append(f"- {nm} ({c.get('type') or c.name})" + (" *" if c.has_attr("required") else ""))
+        if ctrls:
+            pre = soup.new_tag("pre")
+            pre.string = "Form:\n" + "\n".join(ctrls)
+            fm.replace_with(pre)
+        else:
+            fm.decompose()
+    for tag in soup(["script", "style", "noscript", "template", "link"]):
         tag.decompose()
+    # svg: keep only semantic icons
+    for s in soup.find_all("svg"):
+        if not s.find("title") and not s.get("aria-label"):
+            s.decompose()
+    # force-include guard: never decompose a junk-matched node that is/contains the article
+    keep = set()
+    try:
+        for inc in soup.select(_FORCE_INCLUDE_SELECTOR):
+            keep.add(id(inc))
+            for anc in inc.parents:
+                keep.add(id(anc))
+    except Exception:
+        pass
     try:
         for el in soup.select(_JUNK_SELECTOR):
+            if id(el) in keep:
+                continue
             el.decompose()
     except Exception:
         pass
