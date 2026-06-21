@@ -731,6 +731,20 @@ class BrowserController:
         page = await self.current_page(tab)
         return await page.evaluate(EXTRACT_JS, {"fields": fields, "item": item_selector})
 
+    async def extract_auto(self, item_selector=None, max_items=30, tab=None):
+        """Auto-detect the largest group of repeating structurally-similar items and pull a
+        field-per-leaf table — no pre-written selectors. Returns {schema, count, fields, data}."""
+        from .extract import AUTO_EXTRACT_JS
+        page = await self.current_page(tab)
+        return await page.evaluate(AUTO_EXTRACT_JS, {"itemSelector": item_selector, "maxItems": max_items})
+
+    async def structured_data(self, tab=None):
+        """Collect structured data already in the page (JSON-LD > microdata > OpenGraph),
+        merged into one candidate map. Deterministic, no LLM."""
+        from .extract import STRUCTURED_DATA_JS
+        page = await self.current_page(tab)
+        return await page.evaluate(STRUCTURED_DATA_JS)
+
     def _downloads_dir(self):
         d = os.path.join(os.path.dirname(self.cfg.profile_dir) or ".", "downloads")
         os.makedirs(d, exist_ok=True)

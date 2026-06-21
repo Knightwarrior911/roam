@@ -342,6 +342,16 @@ class BridgeBrowser:
         r = await self.bridge.call("extract", self._t({"fields": fields, "item": item_selector}, tab))
         return r.get("data") if isinstance(r, dict) else r
 
+    async def extract_auto(self, item_selector=None, max_items=30, tab=None):
+        from .extract import AUTO_EXTRACT_JS
+        isel = "null" if item_selector is None else repr(item_selector)
+        return await self.eval_js(
+            f"({AUTO_EXTRACT_JS})({{itemSelector: {isel}, maxItems: {int(max_items)}}})", tab=tab)
+
+    async def structured_data(self, tab=None):
+        from .extract import STRUCTURED_DATA_JS
+        return await self.eval_js(f"({STRUCTURED_DATA_JS})()", tab=tab)
+
     async def pdf(self, path=None, tab=None):
         import base64, os
         data = (await self.bridge.call("pdf", self._t({}, tab), timeout=60))["data"]

@@ -349,6 +349,21 @@ async def _extract(fields: dict, item_selector: str | None = None, tab: int | No
     await _nav_if(url, tab, wait)
     return await _ctl().extract(fields, item_selector=item_selector, tab=tab)
 @tool
+async def _extract_auto(item_selector: str | None = None, max_items: int = 30, tab: int | None = None,
+                        url: str | None = None, wait: str = "load"):
+    """Auto-detect the largest group of repeating items on the page (product cards, search
+    results, table rows) and pull a field-per-leaf table — NO pre-written selectors. Returns
+    {schema, count, fields, data}. Pass item_selector to force the container; url= navigates first."""
+    await _nav_if(url, tab, wait)
+    return await _ctl().extract_auto(item_selector=item_selector, max_items=max_items, tab=tab)
+@tool
+async def _structured_data(tab: int | None = None, url: str | None = None, wait: str = "load"):
+    """Collect structured data already embedded in the page — JSON-LD > schema.org microdata >
+    OpenGraph/meta, merged into one map (title/description/image/price/brand/author/...).
+    Deterministic, no LLM; the cheap+reliable way to get a page's key facts. url= navigates first."""
+    await _nav_if(url, tab, wait)
+    return await _ctl().structured_data(tab=tab)
+@tool
 async def _pdf(path: str | None = None, tab: int | None = None):
     return await _ctl().pdf(path=path, tab=tab)
 @tool
@@ -499,7 +514,8 @@ _REGISTRY = {
     "scrape": _scrape, "assets": _assets,
     "controlled": _controlled, "solve_cloudflare": _solve_cloudflare,
     "record_api": _record_api, "recipes": _recipes,
-    "extract": _extract, "pdf": _pdf, "download": _download, "upload": _upload,
+    "extract": _extract, "extract_auto": _extract_auto, "structured_data": _structured_data,
+    "pdf": _pdf, "download": _download, "upload": _upload,
     "cookies": _cookies,
 }
 TOOL_NAMES = list(_REGISTRY) + ["screenshot"]

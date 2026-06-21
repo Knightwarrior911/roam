@@ -1,6 +1,12 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Roam Fixture</title></head>
+<head><meta charset="utf-8"><title>Roam Fixture</title>
+  <meta property="og:title" content="Roam OG Title">
+  <meta name="description" content="A roam test page for extraction.">
+  <script type="application/ld+json">
+    {"@context":"https://schema.org","@type":"Article","headline":"LD Headline","author":{"name":"Jane Roam"}}
+  </script>
+</head>
 <body>
   <h1 id="title">Roam Test Page</h1>
   <form id="f" onsubmit="document.getElementById('out').textContent='submitted:'+document.getElementById('q').value;return false;">
@@ -15,6 +21,13 @@
   <table id="tbl"><thead><tr><th>K</th><th>V</th></tr></thead>
     <tbody><tr><td>one</td><td>1</td></tr><tr><td>two</td><td>2</td></tr></tbody></table>
   <div id="out"></div>
+  <!-- repeating product cards for extract_auto -->
+  <ul id="products">
+    <li class="card"><a class="name" href="/p/1">Widget A</a><span class="price">$10</span></li>
+    <li class="card"><a class="name" href="/p/2">Widget B</a><span class="price">$20</span></li>
+    <li class="card"><a class="name" href="/p/3">Widget C</a><span class="price">$30</span></li>
+    <li class="card"><a class="name" href="/p/4">Widget D</a><span class="price">$40</span></li>
+  </ul>
   <!-- fixed-position button: offsetParent===null but visible; must still be snapshotted -->
   <button id="fixedbtn" style="position:fixed;top:0;right:0">FixedClose</button>
   <!-- open shadow root: the button inside must be snapshotted + resolvable -->
