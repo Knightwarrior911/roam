@@ -56,10 +56,32 @@ class Config:
     bypass_clear_cookies: bool = True    # clear cookies on known paywalled sites (BPC default; resets meters)
 
 
+_config_cache = None
+_config_cache_ts = 0.0
+_config_cache_home = None
+_config_cache_mtime = 0.0
+
+
 def load_config() -> Config:
+    """Load config from disk, cached for 5s to avoid re-reading on every tool call.
+    Auto-invalidates when LOCALAPPDATA changes or config.json is modified.
+    Call invalidate_config() after writing config.json to pick up changes immediately."""
+    global _config_cache, _config_cache_ts, _config_cache_home, _config_cache_mtime
+    import time as _t
+    now = _t.time()
     home = _home()
-    cfg = Config(profile_dir=str(home / "profile"))
+    home_str = str(home)
     f = home / "config.json"
+    try:
+        mtime = f.stat().st_mtime if f.exists() else 0.0
+    except OSError:
+        mtime = 0.0
+    if (_config_cache is not None
+            and (now - _config_cache_ts) < 5.0
+            and _config_cache_home == home_str
+            and _config_cache_mtime == mtime):
+        return _config_cache
+    cfg = Config(profile_dir=str(home / "profile"))
     if f.exists():
         data = json.loads(f.read_text(encoding="utf-8"))
         for k in ("headless", "channel", "mode_default", "bridge_auto",
@@ -69,4 +91,15 @@ def load_config() -> Config:
                   "bypass", "bypass_rules_dir", "bypass_clear_cookies"):
             if k in data:
                 setattr(cfg, k, data[k])
+    _config_cache = cfg
+    _config_cache_ts = now
+    _config_cache_home = home_str
+    _config_cache_mtime = mtime
     return cfg
+
+
+def invalidate_config():
+    """Force re-read on next load_config() call."""
+    global _config_cache, _config_cache_ts
+    _config_cache = None
+    _config_cache_ts = 0.0

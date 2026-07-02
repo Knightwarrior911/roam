@@ -6,10 +6,54 @@ from collections import deque
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 from .errors import RoamError
 from .snapshot import SNAPSHOT_JS, build_outline
-from .memory import SelectorMemory, REMEMBER_JS, format_manual
+from .memory import SelectorMemory, format_manual
 from .bypass import PaywallBypass, CLEANUP_JS
 from .stealth import STEALTH_JS, build_stealth_args, AUDIT_JS, audit_verdict, should_apply_uach, apply_uach
-from .heal import FINGERPRINT_EL_JS, RELOCATE_JS
+from .heal import RELOCATE_JS
+
+# Synchronous element-info capture via page.evaluate (not a Playwright locator).
+# Returns immediately if the element is gone — no 15s locator timeout hang.
+_CAPTURE_JS = r"""(ref) => {
+  const el = document.querySelector('[data-roam-ref="' + ref + '"]');
+  if (!el) return null;
+  const selector = (() => {
+    if (el.id) return '#' + CSS.escape(el.id);
+    const parts = []; let node = el;
+    while (node && node.nodeType === 1 && node.tagName !== 'BODY' && parts.length < 5) {
+      let sel = node.tagName.toLowerCase();
+      const tid = node.getAttribute('data-testid');
+      if (tid) { parts.unshift(sel + '[data-testid="' + tid + '"]'); break; }
+      const parent = node.parentElement;
+      if (parent) {
+        const sib = Array.from(parent.children).filter(c => c.tagName === node.tagName);
+        if (sib.length > 1) sel += ':nth-of-type(' + (sib.indexOf(node) + 1) + ')';
+      }
+      parts.unshift(sel); node = node.parentElement;
+    }
+    return parts.join(' > ');
+  })();
+  const role = el.getAttribute('role') || ({A:'link',BUTTON:'button',SELECT:'combobox',
+    TEXTAREA:'textbox',INPUT:(el.type==='submit'||el.type==='button')?'button':'textbox'}
+    [el.tagName] || el.tagName.toLowerCase());
+  const name = (el.getAttribute('aria-label') || el.getAttribute('placeholder') ||
+    el.getAttribute('alt') || (el.innerText || el.textContent || '').trim())
+    .replace(/\s+/g, ' ').slice(0, 120);
+  // fingerprint for self-healing (same shape as FINGERPRINT_EL_JS)
+  const attrs = {};
+  for (const a of el.attributes) if (a.name !== 'data-roam-ref') attrs[a.name] = a.value;
+  const path = []; let p = el;
+  while (p && p.tagName && p.tagName !== 'BODY' && path.length < 8) { path.unshift(p.tagName.toLowerCase()); p = p.parentElement; }
+  const par = el.parentElement;
+  const fingerprint = {
+    tag: el.tagName.toLowerCase(),
+    text: (el.innerText || el.textContent || '').trim().slice(0, 120),
+    attrs, path,
+    parent_tag: par ? par.tagName.toLowerCase() : '',
+    siblings: par ? [...par.children].map(c => c.tagName.toLowerCase()) : [],
+    children: [...el.children].map(c => c.tagName.toLowerCase()),
+  };
+  return { selector, role, name, fingerprint };
+}"""
 
 _BLOCK_MARKERS = ("just a moment", "cf-browser-verification", "challenge-platform",
                   "/cdn-cgi/challenge", "enable javascript and cookies", "attention required!",
@@ -603,22 +647,28 @@ class BrowserController:
         or None. Use after a click that 'did nothing' — it may have been a confirm()."""
         return self._last_dialog
 
-    async def _remember(self, loc):
-        """Best-effort: record a durable selector + a structural fingerprint for a
-        successfully-acted element (the fingerprint powers self-healing later)."""
+    async def _capture_element_info(self, loc, tab=None):
+        """Best-effort: synchronously grab element info via page.evaluate (not a locator).
+        Returns None if the element is gone (page navigated) — never hangs."""
         try:
-            info = await loc.evaluate(REMEMBER_JS)
-            if info and info.get("selector"):
-                page = await self.current_page()
-                fp = None
-                try:
-                    fp = await loc.evaluate(FINGERPRINT_EL_JS)
-                except Exception:
-                    pass
-                self.memory.record(page.url, info.get("role", ""), info.get("name", ""),
-                                   info["selector"], fingerprint=fp)
+            page = await self.current_page(tab)
+            ref = await loc.get_attribute("data-roam-ref", timeout=500)
+            if not ref:
+                return None
+            return await page.evaluate(_CAPTURE_JS, ref)
         except Exception:
-            pass  # memory is best-effort, never breaks an action
+            return None
+
+    async def _store_info(self, info, tab=None):
+        """Best-effort: store pre-captured element info in selector memory."""
+        if not info or not info.get("selector"):
+            return
+        try:
+            page = await self.current_page(tab)
+            self.memory.record(page.url, info.get("role", ""), info.get("name", ""),
+                               info["selector"], fingerprint=info.get("fingerprint"))
+        except Exception:
+            pass
 
     async def relocate(self, fingerprint, tab=None):
         """Find the element best matching a stored fingerprint in the live DOM (self-heal).
@@ -722,6 +772,8 @@ class BrowserController:
         loc = await self._target(ref, selector, tab)
         if loc is None:
             raise RoamError("BAD_ARGS", "click needs ref, selector, or x/y", "")
+        # P0: capture element info BEFORE click — ref may vanish after navigation
+        pre_info = await self._capture_element_info(loc, tab)
         box = None
         if human:
             # native loc.click() auto-scrolls; the humanized path uses viewport coords, so we
@@ -745,13 +797,15 @@ class BrowserController:
             raise RoamError("NOT_ACTIONABLE", str(e),
                             "element not clickable in time (covered/disabled/animating?); "
                             "try dismiss_popups, scroll, or raise timeout")
-        await self._remember(loc)
+        await self._store_info(pre_info, tab)
         return {"clicked": element or ref or selector}
 
     async def type_text(self, element=None, ref=None, selector=None, text="", submit=False, tab=None):
         loc = await self._target(ref, selector, tab)
         if loc is None:
             raise RoamError("BAD_ARGS", "type needs ref or selector", "")
+        # P0: capture element info BEFORE typing
+        pre_info = await self._capture_element_info(loc, tab)
         if self.cfg.humanize:
             from .humanize import human_type
             page = await self.current_page(tab)
@@ -771,7 +825,7 @@ class BrowserController:
             await loc.fill(text)
             if submit:
                 await loc.press("Enter")
-        await self._remember(loc)
+        await self._store_info(pre_info, tab)
         return {"typed": text, "submitted": submit}
 
     async def press(self, key, tab=None):
@@ -783,8 +837,9 @@ class BrowserController:
         loc = await self._target(ref, selector, tab)
         if loc is None:
             raise RoamError("BAD_ARGS", "select needs ref or selector", "")
+        pre_info = await self._capture_element_info(loc, tab)
         chosen = await loc.select_option(values or [])
-        await self._remember(loc)
+        await self._store_info(pre_info, tab)
         return {"selected": chosen}
 
     async def hover(self, element=None, ref=None, selector=None, tab=None):
@@ -942,9 +997,10 @@ class BrowserController:
         loc = await self._target(ref, selector, tab)
         if loc is None:
             raise RoamError("BAD_ARGS", "upload needs ref or selector (a file input)", "")
+        pre_info = await self._capture_element_info(loc, tab)
         paths = files if isinstance(files, list) else [files]
         await loc.set_input_files(paths)
-        await self._remember(loc)
+        await self._store_info(pre_info, tab)
         return {"uploaded": paths}
 
     # ---- observation ----

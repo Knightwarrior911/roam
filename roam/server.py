@@ -70,7 +70,7 @@ async def _current_url(url=None):
         return None
 
 
-async def _nav_if(url, tab, wait="load"):
+async def _nav_if(url, tab, wait="domcontentloaded"):
     """Navigate first when a read-family tool is given a url, so 'read this page'
     is a single call instead of goto + read."""
     if url:
@@ -169,7 +169,7 @@ async def _forward(tab: int | None = None): return await _ctl().forward(tab=tab)
 async def _reload(tab: int | None = None): return await _ctl().reload(tab=tab)
 @tool
 async def _snapshot(interactive_only: bool = True, selector: str | None = None, tab: int | None = None,
-                    url: str | None = None, wait: str = "load"):
+                    url: str | None = None, wait: str = "domcontentloaded"):
     """List the page's interactive elements (links, buttons, inputs) with a stable `ref`
     for each — call before click/type when you want to target an element explicitly. Pass
     url= to navigate first. interactive_only=False includes all elements."""
@@ -206,14 +206,14 @@ async def _scroll(direction: str | None = None, ref: str | None = None, tab: int
     return await _ctl().scroll(direction, ref, tab=tab)
 @tool
 async def _read(selector: str | None = None, ref: str | None = None, tab: int | None = None,
-                url: str | None = None, wait: str = "load"):
+                url: str | None = None, wait: str = "domcontentloaded"):
     """Read the visible text of the page (or one element by selector/ref). Pass url= to
     navigate there first. For article/document content prefer read_markdown."""
     await _nav_if(url, tab, wait)
     return await _ctl().read(selector, ref, tab=tab)
 @tool
 async def _read_markdown(selector: str | None = None, tab: int | None = None,
-                         url: str | None = None, wait: str = "load",
+                         url: str | None = None, wait: str = "domcontentloaded",
                          query: str | None = None, readability: bool = False,
                          use_cache: bool = False, max_chars: int | None = None):
     """Clean, token-cheap Markdown of the page (or one element). Pass url= to navigate
@@ -247,7 +247,7 @@ async def _dismiss_popups(tab: int | None = None):
     return await _ctl().dismiss_popups(tab=tab)
 @tool
 async def _find_links(keywords: list | None = None, tab: int | None = None,
-                      url: str | None = None, wait: str = "load"):
+                      url: str | None = None, wait: str = "domcontentloaded"):
     """List the page's links (text + href), optionally filtered to those whose text/href
     contains any of `keywords`. Pass url= to navigate first. Handy to pick the next page to
     read after a search."""
@@ -265,7 +265,7 @@ async def _scrape(urls: list, concurrency: int = 5, engine: str = "browser",
     return {"results": await _ctl().scrape_many(urls, concurrency, engine, fmt, eval, wait, timeout_ms)}
 @tool
 async def _assets(tab: int | None = None, url: str | None = None,
-                  kinds: list | None = None, wait: str = "load"):
+                  kinds: list | None = None, wait: str = "domcontentloaded"):
     """List every sub-resource the page references (images, scripts, styles, fonts, media,
     iframes, links) as absolute URLs, categorized + flattened. Pass url= to navigate first.
     kinds filters categories, e.g. kinds=["images","media"]."""
@@ -289,7 +289,7 @@ async def _web_search(query: str, site: str | None = None, filetype: str | None 
 async def _eval(js: str, tab: int | None = None): return await _ctl().eval_js(js, tab=tab)
 @tool
 async def _observe(instruction: str, scope: str | None = None, max_results: int = 8,
-                   tab: int | None = None, url: str | None = None, wait: str = "load"):
+                   tab: int | None = None, url: str | None = None, wait: str = "domcontentloaded"):
     """Plan in one shot: snapshot the page and return the interactive elements most relevant
     to `instruction`, ranked, each with a ref + suggested method — feed them straight into
     act()/click()/type() without re-reading the whole outline. url= navigates first."""
@@ -298,7 +298,7 @@ async def _observe(instruction: str, scope: str | None = None, max_results: int 
 @tool
 async def _act(instruction: str, text: str | None = None, variables: dict | None = None,
                tab: int | None = None, timeout: int | None = None,
-               url: str | None = None, wait: str = "load"):
+               url: str | None = None, wait: str = "domcontentloaded"):
     """Do it in ONE call: pick the element best matching `instruction`, wait for it to be
     actionable, then click or type (inferred). %name% placeholders in text/instruction are
     substituted from `variables` locally so secrets never enter the element-picking step.
@@ -376,7 +376,7 @@ async def _solve_cloudflare(max_attempts: int = 3, tab: int | None = None):
     return await _ctl().solve_cloudflare(max_attempts=max_attempts, tab=tab)
 @tool
 async def _extract(fields: dict, item_selector: str | None = None, tab: int | None = None,
-                   url: str | None = None, wait: str = "load"):
+                   url: str | None = None, wait: str = "domcontentloaded"):
     """Scrape repeating items (products, rows, search results) into structured JSON. `fields`
     maps output keys to CSS selectors; `item_selector` is the repeating container. Pass url= to
     navigate first. Returns the data plus a replayable Playwright script."""
@@ -384,14 +384,14 @@ async def _extract(fields: dict, item_selector: str | None = None, tab: int | No
     return await _ctl().extract(fields, item_selector=item_selector, tab=tab)
 @tool
 async def _extract_auto(item_selector: str | None = None, max_items: int = 30, tab: int | None = None,
-                        url: str | None = None, wait: str = "load"):
+                        url: str | None = None, wait: str = "domcontentloaded"):
     """Auto-detect the largest group of repeating items on the page (product cards, search
     results, table rows) and pull a field-per-leaf table — NO pre-written selectors. Returns
     {schema, count, fields, data}. Pass item_selector to force the container; url= navigates first."""
     await _nav_if(url, tab, wait)
     return await _ctl().extract_auto(item_selector=item_selector, max_items=max_items, tab=tab)
 @tool
-async def _structured_data(tab: int | None = None, url: str | None = None, wait: str = "load"):
+async def _structured_data(tab: int | None = None, url: str | None = None, wait: str = "domcontentloaded"):
     """Collect structured data already embedded in the page — JSON-LD > schema.org microdata >
     OpenGraph/meta, merged into one map (title/description/image/price/brand/author/...).
     Deterministic, no LLM; the cheap+reliable way to get a page's key facts. url= navigates first."""
@@ -540,6 +540,8 @@ async def _set_channel(channel: str = "auto", headless: bool = False):
     'auto' (detect). Relaunches the managed browser so the change takes effect. Does not
     affect bridge mode (that's always your real browser)."""
     global _controller
+    from .config import invalidate_config
+    invalidate_config()
     cfg = load_config()
     cfg.channel = channel
     cfg.headless = headless

@@ -70,38 +70,42 @@ class SelectorMemory:
 
     def __init__(self, db_path):
         self.db_path = db_path
+        self._db = None  # persistent connection (lazy init)
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-        with self._conn() as c:
-            c.execute(
-                """CREATE TABLE IF NOT EXISTS selectors(
-                    domain TEXT, path TEXT, role TEXT, name TEXT, selector TEXT,
-                    hits INTEGER DEFAULT 1, last_ts INTEGER, fingerprint TEXT,
-                    PRIMARY KEY(domain, path, role, name))"""
-            )
-            try:  # migrate older dbs
-                c.execute("ALTER TABLE selectors ADD COLUMN fingerprint TEXT")
-            except sqlite3.OperationalError:
-                pass
-            # action manuals: a named, ordered sequence of steps per site (the moat).
-            c.execute(
-                """CREATE TABLE IF NOT EXISTS manuals(
-                    domain TEXT, name TEXT, steps TEXT,
-                    hits INTEGER DEFAULT 1, last_ts INTEGER,
-                    PRIMARY KEY(domain, name))"""
-            )
-            # API recipes: the internal API calls a site makes, captured from real browsing
-            # (actionbook's real moat). Claude turns these into direct-fetch shortcuts.
-            c.execute(
-                """CREATE TABLE IF NOT EXISTS recipes(
-                    domain TEXT, name TEXT, method TEXT, api_url TEXT, resp_keys TEXT,
-                    hits INTEGER DEFAULT 1, last_ts INTEGER,
-                    PRIMARY KEY(domain, name))"""
-            )
+        c = self._conn()
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS selectors(
+                domain TEXT, path TEXT, role TEXT, name TEXT, selector TEXT,
+                hits INTEGER DEFAULT 1, last_ts INTEGER, fingerprint TEXT,
+                PRIMARY KEY(domain, path, role, name))"""
+        )
+        try:  # migrate older dbs
+            c.execute("ALTER TABLE selectors ADD COLUMN fingerprint TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # action manuals: a named, ordered sequence of steps per site (the moat).
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS manuals(
+                domain TEXT, name TEXT, steps TEXT,
+                hits INTEGER DEFAULT 1, last_ts INTEGER,
+                PRIMARY KEY(domain, name))"""
+        )
+        # API recipes: the internal API calls a site makes, captured from real browsing
+        # (actionbook's real moat). Claude turns these into direct-fetch shortcuts.
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS recipes(
+                domain TEXT, name TEXT, method TEXT, api_url TEXT, resp_keys TEXT,
+                hits INTEGER DEFAULT 1, last_ts INTEGER,
+                PRIMARY KEY(domain, name))"""
+        )
 
     def _conn(self):
-        c = sqlite3.connect(self.db_path)
-        c.row_factory = sqlite3.Row
-        return c
+        """Return the persistent connection (lazy init). Reused across all calls —
+        safe because asyncio is single-threaded."""
+        if self._db is None:
+            self._db = sqlite3.connect(self.db_path)
+            self._db.row_factory = sqlite3.Row
+        return self._db
 
     def record(self, url, role, name, selector, fingerprint=None, ts=None):
         if not selector:
@@ -109,49 +113,49 @@ class SelectorMemory:
         domain, path = _key(url)
         ts = ts if ts is not None else int(time.time())
         fp = json.dumps(fingerprint) if fingerprint else None
-        with self._conn() as c:
-            c.execute(
-                """INSERT INTO selectors(domain, path, role, name, selector, hits, last_ts, fingerprint)
-                   VALUES(?,?,?,?,?,1,?,?)
-                   ON CONFLICT(domain, path, role, name) DO UPDATE SET
-                     hits = hits + 1, selector = excluded.selector, last_ts = excluded.last_ts,
-                     fingerprint = COALESCE(excluded.fingerprint, selectors.fingerprint)""",
-                (domain, path, role, name, selector, ts, fp),
-            )
+        c = self._conn()
+        c.execute(
+            """INSERT INTO selectors(domain, path, role, name, selector, hits, last_ts, fingerprint)
+               VALUES(?,?,?,?,?,1,?,?)
+               ON CONFLICT(domain, path, role, name) DO UPDATE SET
+                 hits = hits + 1, selector = excluded.selector, last_ts = excluded.last_ts,
+                 fingerprint = COALESCE(excluded.fingerprint, selectors.fingerprint)""",
+            (domain, path, role, name, selector, ts, fp),
+        )
 
     def fingerprint_for(self, url=None, domain=None, role=None, name=None):
         if url and "://" in url:
             domain = _key(url)[0]
-        with self._conn() as c:
-            r = c.execute(
-                "SELECT fingerprint FROM selectors WHERE domain=? AND role=? AND name=? "
-                "AND fingerprint IS NOT NULL ORDER BY hits DESC LIMIT 1",
-                (domain, role, name)).fetchone()
+        c = self._conn()
+        r = c.execute(
+            "SELECT fingerprint FROM selectors WHERE domain=? AND role=? AND name=? "
+            "AND fingerprint IS NOT NULL ORDER BY hits DESC LIMIT 1",
+            (domain, role, name)).fetchone()
         return json.loads(r["fingerprint"]) if r and r["fingerprint"] else None
 
     def update_selector(self, url=None, domain=None, role=None, name=None, selector=None):
         if url and "://" in url:
             domain = _key(url)[0]
-        with self._conn() as c:
-            return c.execute(
-                "UPDATE selectors SET selector=? WHERE domain=? AND role=? AND name=?",
-                (selector, domain, role, name)).rowcount
+        c = self._conn()
+        return c.execute(
+            "UPDATE selectors SET selector=? WHERE domain=? AND role=? AND name=?",
+            (selector, domain, role, name)).rowcount
 
     def recall(self, url=None, domain=None, query=None):
         path = None
         if url:
             domain, path = _key(url)
-        with self._conn() as c:
-            if domain and path:
-                rows = c.execute(
-                    "SELECT * FROM selectors WHERE domain=? AND path=? ORDER BY hits DESC",
-                    (domain, path)).fetchall()
-            elif domain:
-                rows = c.execute(
-                    "SELECT * FROM selectors WHERE domain=? ORDER BY hits DESC",
-                    (domain,)).fetchall()
-            else:
-                rows = c.execute("SELECT * FROM selectors ORDER BY hits DESC").fetchall()
+        c = self._conn()
+        if domain and path:
+            rows = c.execute(
+                "SELECT * FROM selectors WHERE domain=? AND path=? ORDER BY hits DESC",
+                (domain, path)).fetchall()
+        elif domain:
+            rows = c.execute(
+                "SELECT * FROM selectors WHERE domain=? ORDER BY hits DESC",
+                (domain,)).fetchall()
+        else:
+            rows = c.execute("SELECT * FROM selectors ORDER BY hits DESC").fetchall()
         out = [dict(r) for r in rows]
         if query:
             # rank by intent (stem/prefix-aware), tie-break on hits; never return empty
@@ -165,36 +169,36 @@ class SelectorMemory:
         return out
 
     def forget(self, domain):
-        with self._conn() as c:
-            return c.execute("DELETE FROM selectors WHERE domain=?", (domain,)).rowcount
+        c = self._conn()
+        return c.execute("DELETE FROM selectors WHERE domain=?", (domain,)).rowcount
 
     # ---- action manuals: named multi-step sequences per site ----
     def save_manual(self, url, name, steps, ts=None):
         domain = _key(url)[0] if "://" in (url or "") else (url or "")
         ts = ts if ts is not None else int(time.time())
         blob = json.dumps(steps)
-        with self._conn() as c:
-            c.execute(
-                """INSERT INTO manuals(domain, name, steps, hits, last_ts)
-                   VALUES(?,?,?,1,?)
-                   ON CONFLICT(domain, name) DO UPDATE SET
-                     hits = hits + 1, steps = excluded.steps, last_ts = excluded.last_ts""",
-                (domain, name, blob, ts))
+        c = self._conn()
+        c.execute(
+            """INSERT INTO manuals(domain, name, steps, hits, last_ts)
+               VALUES(?,?,?,1,?)
+               ON CONFLICT(domain, name) DO UPDATE SET
+                 hits = hits + 1, steps = excluded.steps, last_ts = excluded.last_ts""",
+            (domain, name, blob, ts))
 
     def get_manual(self, url=None, name=None, domain=None):
         if url and "://" in url:
             domain = _key(url)[0]
-        with self._conn() as c:
-            if name is not None:
-                r = c.execute("SELECT * FROM manuals WHERE domain=? AND name=?",
-                              (domain, name)).fetchone()
-                if not r:
-                    return None
-                d = dict(r)
-                d["steps"] = json.loads(d["steps"])
-                return d
-            rows = c.execute("SELECT * FROM manuals WHERE domain=? ORDER BY hits DESC",
-                             (domain,)).fetchall()
+        c = self._conn()
+        if name is not None:
+            r = c.execute("SELECT * FROM manuals WHERE domain=? AND name=?",
+                          (domain, name)).fetchone()
+            if not r:
+                return None
+            d = dict(r)
+            d["steps"] = json.loads(d["steps"])
+            return d
+        rows = c.execute("SELECT * FROM manuals WHERE domain=? ORDER BY hits DESC",
+                         (domain,)).fetchall()
         out = []
         for r in rows:
             d = dict(r)
@@ -203,35 +207,35 @@ class SelectorMemory:
         return out
 
     def forget_manual(self, domain, name=None):
-        with self._conn() as c:
-            if name is not None:
-                return c.execute("DELETE FROM manuals WHERE domain=? AND name=?",
-                                 (domain, name)).rowcount
-            return c.execute("DELETE FROM manuals WHERE domain=?", (domain,)).rowcount
+        c = self._conn()
+        if name is not None:
+            return c.execute("DELETE FROM manuals WHERE domain=? AND name=?",
+                             (domain, name)).rowcount
+        return c.execute("DELETE FROM manuals WHERE domain=?", (domain,)).rowcount
 
     # ---- API recipes: internal API calls captured per site ----
     def record_recipe(self, url, name, method, api_url, resp_keys=None, ts=None):
         domain = _key(url)[0] if "://" in (url or "") else (url or "")
         ts = ts if ts is not None else int(time.time())
         keys = json.dumps(resp_keys or [])
-        with self._conn() as c:
-            c.execute(
-                """INSERT INTO recipes(domain, name, method, api_url, resp_keys, hits, last_ts)
-                   VALUES(?,?,?,?,?,1,?)
-                   ON CONFLICT(domain, name) DO UPDATE SET
-                     hits = hits + 1, method = excluded.method, api_url = excluded.api_url,
-                     resp_keys = excluded.resp_keys, last_ts = excluded.last_ts""",
-                (domain, name, method, api_url, keys, ts))
+        c = self._conn()
+        c.execute(
+            """INSERT INTO recipes(domain, name, method, api_url, resp_keys, hits, last_ts)
+               VALUES(?,?,?,?,?,1,?)
+               ON CONFLICT(domain, name) DO UPDATE SET
+                 hits = hits + 1, method = excluded.method, api_url = excluded.api_url,
+                 resp_keys = excluded.resp_keys, last_ts = excluded.last_ts""",
+            (domain, name, method, api_url, keys, ts))
 
     def get_recipes(self, url=None, domain=None, query=None):
         if url and "://" in url:
             domain = _key(url)[0]
-        with self._conn() as c:
-            if domain:
-                rows = c.execute("SELECT * FROM recipes WHERE domain=? ORDER BY hits DESC",
-                                 (domain,)).fetchall()
-            else:
-                rows = c.execute("SELECT * FROM recipes ORDER BY hits DESC").fetchall()
+        c = self._conn()
+        if domain:
+            rows = c.execute("SELECT * FROM recipes WHERE domain=? ORDER BY hits DESC",
+                             (domain,)).fetchall()
+        else:
+            rows = c.execute("SELECT * FROM recipes ORDER BY hits DESC").fetchall()
         out = []
         for r in rows:
             d = dict(r)
@@ -250,11 +254,11 @@ class SelectorMemory:
         return out
 
     def forget_recipe(self, domain, name=None):
-        with self._conn() as c:
-            if name is not None:
-                return c.execute("DELETE FROM recipes WHERE domain=? AND name=?",
-                                 (domain, name)).rowcount
-            return c.execute("DELETE FROM recipes WHERE domain=?", (domain,)).rowcount
+        c = self._conn()
+        if name is not None:
+            return c.execute("DELETE FROM recipes WHERE domain=? AND name=?",
+                             (domain, name)).rowcount
+        return c.execute("DELETE FROM recipes WHERE domain=?", (domain,)).rowcount
 
 
 def format_manual(rows):
